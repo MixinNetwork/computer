@@ -537,11 +537,6 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 		} else {
 			cid := common.UniqueId(id, "storage")
-			nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-			err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-			if err != nil {
-				return err
-			}
 			fee, err := node.getSystemCallFeeFromXIN(ctx, call)
 			if err != nil {
 				return err
@@ -551,6 +546,13 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 				return err
 			}
 			if tx != nil {
+				nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+				if !nonce.CallId.Valid {
+					err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+					if err != nil {
+						return err
+					}
+				}
 				tb, err := tx.MarshalBinary()
 				if err != nil {
 					panic(err)
@@ -808,9 +810,11 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
-			err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-			if err != nil {
-				return err
+			if !nonce.CallId.Valid {
+				err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+				if err != nil {
+					return err
+				}
 			}
 			data, err := tx.MarshalBinary()
 			if err != nil {
@@ -838,9 +842,11 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
 		if tx != nil {
-			err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-			if err != nil {
-				return err
+			if !nonce.CallId.Valid {
+				err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+				if err != nil {
+					return err
+				}
 			}
 			data, err := tx.MarshalBinary()
 			if err != nil {
