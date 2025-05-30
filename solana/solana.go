@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/apps/ethereum"
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/gagliardetto/solana-go"
 	lookup "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
@@ -189,11 +189,8 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	extra := solana.MustPublicKeyFromBase58(user).Bytes()
 	extra = append(extra, depositHash[:]...)
 
-	nonce, err := node.store.ReadSpareNonceAccount(ctx)
-	if err != nil {
-		return err
-	}
-	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+	err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 	if err != nil {
 		return err
 	}

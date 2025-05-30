@@ -537,10 +537,7 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 		} else {
 			cid := common.UniqueId(id, "storage")
-			nonce, err := node.store.ReadSpareNonceAccount(ctx)
-			if err != nil {
-				return err
-			}
+			nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 			err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 			if err != nil {
 				return err
@@ -808,13 +805,10 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 
 	if call.Type == store.CallTypeMain && !call.SkipPostProcess {
 		cid := common.UniqueId(id, "post-process")
-		nonce, err := node.store.ReadSpareNonceAccount(ctx)
-		if err != nil || nonce == nil {
-			return fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err)
-		}
+		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
-			err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+			err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 			if err != nil {
 				return err
 			}
@@ -841,13 +835,10 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 
 	if call.Type == store.CallTypeMain {
 		cid := common.UniqueId(id, "post-process")
-		nonce, err := node.store.ReadSpareNonceAccount(ctx)
-		if err != nil || nonce == nil {
-			panic(fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err))
-		}
+		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
 		if tx != nil {
-			err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+			err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 			if err != nil {
 				return err
 			}
@@ -869,4 +860,19 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 		Type:  OperationTypeConfirmCall,
 		Extra: extra,
 	}, nil)
+}
+
+func (node *Node) ReadSpareNonceAccountWithCall(ctx context.Context, cid string) *store.NonceAccount {
+	nonce, err := node.store.ReadNonceAccountByCall(ctx, cid)
+	if err != nil {
+		panic(err)
+	}
+	if nonce != nil {
+		return nonce
+	}
+	nonce, err = node.store.ReadSpareNonceAccount(ctx)
+	if err != nil || nonce == nil {
+		panic(fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err))
+	}
+	return nonce
 }
