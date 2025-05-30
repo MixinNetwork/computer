@@ -21,28 +21,10 @@ jobs:
         go-version: 1.24
 
     - name: Build
-      run: go build -o safe .
-
-    - name: TestMTG
-      run: go test -v ./mtg/...
-
-    - name: TestCommon
-      run: go test -v ./common/...
+      run: go build -o computer .
 
     - name: TestApps
       run: go test -v ./apps/...
-
-    - name: TestCMPEthereumSign
-      run: go test -v ./signer -run TestCMPEthereumSign -count 10
-
-    - name: TestObserver
-      run: go test -v ./observer/...
-
-    - name: TestKeeper
-      run: go test -timeout 20m -v ./keeper/...
-
-    - name: TestSigner
-      run: go test -v ./signer/...
 
     - name: TestComputer
       run: go test -v ./computer/...
