@@ -396,7 +396,7 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 			assets[address].Amount = assets[address].Amount.Add(change.Amount)
 			continue
 		}
-		if !change.Amount.IsNegative() {
+		if !change.Amount.IsPositive() {
 			continue
 		}
 		assets[address] = &ReferencedTxAsset{
