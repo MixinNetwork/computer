@@ -536,17 +536,22 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 				return err
 			}
 		} else {
+			err := node.OccupyNonceAccountByCall(ctx, nonce, call.RequestId)
+			if err != nil {
+				return err
+			}
+
 			cid := common.UniqueId(id, "storage")
 			fee, err := node.getSystemCallFeeFromXIN(ctx, call)
 			if err != nil {
 				return err
 			}
+			nonce = node.ReadSpareNonceAccountWithCall(ctx, cid)
 			tx, err := node.CreatePrepareTransaction(ctx, call, nonce, fee)
 			if err != nil {
 				return err
 			}
 			if tx != nil {
-				nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 				err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
 				if err != nil {
 					return err
@@ -556,10 +561,8 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 					panic(err)
 				}
 				extra = attachSystemCall(extra, cid, tb)
-			}
-			err = node.store.OccupyNonceAccountByCall(ctx, call.NonceAccount, call.RequestId)
-			if err != nil {
-				return err
+			} else {
+				node.releaseLockedNonceAccount(ctx, nonce)
 			}
 		}
 
