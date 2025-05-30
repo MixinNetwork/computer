@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/computer/store"
 	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/mixin/util/base58"
 	"github.com/MixinNetwork/safe/apps/mixin"
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gofrs/uuid/v5"
@@ -512,7 +512,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 			}
 			outputs = os
 
-			post, err = node.getPostProcessCall(ctx, req, call, extra[n*64:])
+			post, err = node.getPostProcessCall(ctx, req, flag, call, extra[n*64:])
 			logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 			if err != nil {
 				return node.failRequest(ctx, req, "")
@@ -568,7 +568,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		}
 
 		var session *store.Session
-		post, err := node.getPostProcessCall(ctx, req, call, extra[16:])
+		post, err := node.getPostProcessCall(ctx, req, flag, call, extra[16:])
 		logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 		if err != nil {
 			return node.failRequest(ctx, req, "")

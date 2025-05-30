@@ -8,12 +8,12 @@ import (
 	"math/big"
 	"slices"
 
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/computer/store"
 	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -214,7 +214,7 @@ func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.Syste
 	}, nil
 }
 
-func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, call *store.SystemCall, data []byte) (*store.SystemCall, error) {
+func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, flag byte, call *store.SystemCall, data []byte) (*store.SystemCall, error) {
 	if call.Type != store.CallTypeMain || len(data) == 0 {
 		return nil, nil
 	}
@@ -247,10 +247,16 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, ca
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
 	}
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
-	err = node.comparePostCallWithSolanaTx(ctx, ras, tx, call.Hash.String, user.ChainAddress)
-	logger.Printf("node.comparePostCallWithSolanaTx(%s %s) => %v", call.Hash.String, user.ChainAddress, err)
-	if err != nil {
-		return nil, err
+
+	switch flag {
+	case FlagConfirmCallSuccess:
+		err = node.comparePostCallWithSolanaTx(ctx, ras, tx, call.Hash.String, user.ChainAddress)
+		logger.Printf("node.comparePostCallWithSolanaTx(%s %s) => %v", call.Hash.String, user.ChainAddress, err)
+		if err != nil {
+			return nil, err
+		}
+	case FlagConfirmCallFail:
+		// TODO compare with user outputs
 	}
 	return post, nil
 }
