@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -809,8 +809,8 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 	if call.Type == store.CallTypeMain && !call.SkipPostProcess {
 		cid := common.UniqueId(id, "post-process")
 		nonce, err := node.store.ReadSpareNonceAccount(ctx)
-		if err != nil {
-			return err
+		if err != nil || nonce == nil {
+			return fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err)
 		}
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
@@ -842,8 +842,8 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 	if call.Type == store.CallTypeMain {
 		cid := common.UniqueId(id, "post-process")
 		nonce, err := node.store.ReadSpareNonceAccount(ctx)
-		if err != nil {
-			panic(err)
+		if err != nil || nonce == nil {
+			panic(fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err))
 		}
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
 		if tx != nil {
