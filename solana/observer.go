@@ -547,11 +547,9 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 			if tx != nil {
 				nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-				if !nonce.CallId.Valid {
-					err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-					if err != nil {
-						return err
-					}
+				err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
+				if err != nil {
+					return err
 				}
 				tb, err := tx.MarshalBinary()
 				if err != nil {
@@ -810,17 +808,17 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
-			if !nonce.CallId.Valid {
-				err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-				if err != nil {
-					return err
-				}
+			err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
+			if err != nil {
+				return err
 			}
 			data, err := tx.MarshalBinary()
 			if err != nil {
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
+		} else {
+			node.releaseLockedNonceAccount(ctx, nonce)
 		}
 	}
 
@@ -842,17 +840,17 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
 		if tx != nil {
-			if !nonce.CallId.Valid {
-				err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-				if err != nil {
-					return err
-				}
+			err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
+			if err != nil {
+				return err
 			}
 			data, err := tx.MarshalBinary()
 			if err != nil {
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
+		} else {
+			node.releaseLockedNonceAccount(ctx, nonce)
 		}
 	}
 
@@ -881,4 +879,14 @@ func (node *Node) ReadSpareNonceAccountWithCall(ctx context.Context, cid string)
 		panic(fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err))
 	}
 	return nonce
+}
+
+func (node *Node) OccupyNonceAccountByCall(ctx context.Context, nonce *store.NonceAccount, cid string) error {
+	if nonce.CallId.Valid {
+		if nonce.CallId.String == cid {
+			return nil
+		}
+		panic(fmt.Errorf("inconsistent call id: %s %s", nonce.CallId.String, cid))
+	}
+	return node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 }
