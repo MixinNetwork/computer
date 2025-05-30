@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MixinNetwork/safe/computer"
-	"github.com/MixinNetwork/safe/config"
+	"github.com/MixinNetwork/computer/config"
+	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/safe/messenger"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/fox-one/mixin-sdk-go/v2"

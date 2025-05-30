@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/MixinNetwork/safe/computer"
+	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/safe/keeper"
 	"github.com/MixinNetwork/safe/observer"
 	"github.com/MixinNetwork/safe/signer"
