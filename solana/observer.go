@@ -561,8 +561,6 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 					panic(err)
 				}
 				extra = attachSystemCall(extra, cid, tb)
-			} else {
-				node.releaseLockedNonceAccount(ctx, nonce)
 			}
 		}
 
@@ -820,8 +818,6 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
-		} else {
-			node.releaseLockedNonceAccount(ctx, nonce)
 		}
 	}
 
@@ -852,8 +848,6 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
-		} else {
-			node.releaseLockedNonceAccount(ctx, nonce)
 		}
 	}
 
