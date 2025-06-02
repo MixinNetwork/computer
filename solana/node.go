@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/multi-party-sig/pkg/party"
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/fox-one/mixin-sdk-go/v2"
 )
@@ -124,6 +124,7 @@ func (node *Node) SafeUser() *bot.SafeUser {
 		ServerPublicKey:   node.conf.MTG.App.ServerPublicKey,
 		SessionPrivateKey: node.conf.MTG.App.SessionPrivateKey,
 		SpendPrivateKey:   node.conf.MTG.App.SpendPrivateKey,
+		IsSpendPrivateSum: node.conf.IsSpendKeyCanonical,
 	}
 }
 

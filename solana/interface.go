@@ -26,6 +26,7 @@ type Configuration struct {
 	SolanaRPC               string             `toml:"solana-rpc"`
 	SolanaKey               string             `toml:"solana-key"`
 	SolanaDepositEntry      string             `toml:"solana-deposit-entry"`
+	IsSpendKeyCanonical     bool               `toml:"is-spend-key-canonical"`
 	MTG                     *mtg.Configuration `toml:"mtg"`
 }
 

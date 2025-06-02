@@ -3,10 +3,10 @@ module github.com/MixinNetwork/computer
 go 1.24.3
 
 require (
-	github.com/MixinNetwork/bot-api-go-client/v3 v3.12.2
+	github.com/MixinNetwork/bot-api-go-client/v3 v3.13.0
 	github.com/MixinNetwork/mixin v0.18.26
 	github.com/MixinNetwork/multi-party-sig v0.4.1
-	github.com/MixinNetwork/safe v0.19.2-0.20250601163309-f126a8d25833
+	github.com/MixinNetwork/safe v0.19.2-0.20250602080625-4a1e6cec1ccf
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/davecgh/go-spew v1.1.1

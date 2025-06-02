@@ -23,6 +23,9 @@ solana-rpc = "https://omniscient-omniscient-reel.solana-mainnet.quiknode.pro/ba8
 solana-key = "56HtVW5YQ9Xi8MTeQFAWdSuzV17mrDAr1AUCYzTdx36VLvsodA89eSuZd6axrufzo4tyoUNdgjDpm4fnLJLRcXmF"
 solana-deposit-entry = "HT7X7p5XPERge4ZShYALRKzkgxua1fW7rVMfwChRrG9V"
 
+# set to true if the mixin observer generates the private spend key without keeping the seed
+is-spend-key-canonical = false
+
 
 [computer.mtg.genesis]
 members = [
