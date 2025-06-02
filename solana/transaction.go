@@ -124,6 +124,10 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 		logger.Printf("node.SendTransactionUntilSufficient(%s) => %v", traceId, err)
 		return err
 	}
+	if assetId != bot.XINAssetId {
+		err := fmt.Errorf("node.sendTransactionToGroupUntilSufficient(%s, %s, %s) => %d", traceId, assetId, amount, len(memo))
+		panic(err)
+	}
 
 	_, err := common.CreateObjectStorageUntilSufficient(ctx, node.mixin, []*bot.TransactionRecipient{{
 		MixAddress: bot.NewUUIDMixAddress(node.conf.MTG.Genesis.Members, byte(node.conf.MTG.Genesis.Threshold)),
