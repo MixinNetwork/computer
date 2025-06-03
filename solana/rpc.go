@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MixinNetwork/mixin/logger"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
-	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/computer/store"
+	"github.com/MixinNetwork/mixin/logger"
+	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 )
@@ -91,16 +91,6 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 			}
 		}
 
-		rpcTx, err = node.RPCGetTransaction(ctx, hash)
-		logger.Printf("solana.RPCGetTransaction(%s) => %v", hash, err)
-		if err != nil {
-			return nil, fmt.Errorf("solana.RPCGetTransaction(%s) => %v", hash, err)
-		}
-		// transaction confirmed after re-sending failure
-		if rpcTx != nil {
-			return rpcTx, nil
-		}
-
 		retry -= 1
 		if retry > 0 {
 			time.Sleep(500 * time.Millisecond)
@@ -120,7 +110,6 @@ func (node *Node) RPCGetTransaction(ctx context.Context, signature string) (*rpc
 	if err != nil {
 		panic(err)
 	}
-
 	if value != "" {
 		var r rpc.GetTransactionResult
 		err = json.Unmarshal(common.DecodeHexOrPanic(value), &r)
@@ -131,11 +120,8 @@ func (node *Node) RPCGetTransaction(ctx context.Context, signature string) (*rpc
 	}
 
 	tx, err := node.solana.RPCGetTransaction(ctx, signature)
-	if err != nil {
-		panic(err)
-	}
-	if tx == nil {
-		return nil, nil
+	if err != nil || tx == nil {
+		return nil, err
 	}
 	b, err := json.Marshal(tx)
 	if err != nil {
