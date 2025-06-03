@@ -47,7 +47,7 @@ func MonitorComputer(ctx context.Context, node *computer.Node, mixin *mixin.Clie
 			continue
 		}
 		postMessages(ctx, store, conv, conf.MTG, msg, conf.ObserverId)
-		time.Sleep(30 * time.Minute)
+		time.Sleep(3 * time.Minute)
 	}
 }
 
