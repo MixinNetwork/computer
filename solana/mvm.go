@@ -732,13 +732,10 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		return nil, ""
 	}
 
-	ver, err := common.VerifyKernelTransaction(ctx, node.group, out, time.Minute)
-	if err != nil {
-		panic(err)
+	if len(out.DepositHash.String) < 16 {
+		panic(out.TransactionHash)
 	}
-	deposit := ver.DepositData()
-
-	rpcTx, err := node.RPCGetTransaction(ctx, deposit.Transaction)
+	rpcTx, err := node.RPCGetTransaction(ctx, out.DepositHash.String)
 	if err != nil {
 		panic(err)
 	}
@@ -790,7 +787,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if expected.Cmp(actual) != 0 {
 			panic(fmt.Errorf("invalid deposit amount: %s %s", expected.String(), actual.String()))
 		}
-		id := common.UniqueId(deposit.Transaction, fmt.Sprintf("deposit-%d", i))
+		id := common.UniqueId(out.DepositHash.String, fmt.Sprintf("deposit-%d", i))
 		id = common.UniqueId(id, t.Receiver)
 		tx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte("deposit"), id)
 		if tx == nil {

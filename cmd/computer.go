@@ -34,6 +34,10 @@ func ComputerBootCmd(c *cli.Context) error {
 		return err
 	}
 	defer db.Close()
+	err = mtg.MigrateSchema(ctx, db)
+	if err != nil {
+		return err
+	}
 
 	group, err := mtg.BuildGroup(ctx, db, mc.Computer.MTG)
 	if err != nil {

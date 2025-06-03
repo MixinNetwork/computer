@@ -6,9 +6,9 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -206,9 +206,5 @@ func (node *Node) verifyKernelTransaction(ctx context.Context, out *mtg.Action) 
 		return false
 	}
 
-	ver, err := common.VerifyKernelTransaction(ctx, node.group, out, KernelTimeout)
-	if err != nil {
-		panic(err)
-	}
-	return ver.DepositData() != nil
+	return out.DepositHash.Valid
 }
