@@ -31,7 +31,8 @@ const (
 	WrappedSolanaAddress = "So11111111111111111111111111111111111111112"
 	SolanaChainBase      = "64692c23-8971-4cf4-84a7-4dd1271dd887"
 
-	AssetDecimal = 8
+	SolanaDecimal = 9
+	AssetDecimal  = 8
 )
 
 type Metadata struct {
@@ -86,6 +87,7 @@ type Transfer struct {
 
 	Sender   string
 	Receiver string
+	Decimal  uint8
 	Value    *big.Int
 
 	MayClosedWsolAta *solana.PublicKey
@@ -526,6 +528,7 @@ func ExtractInitialTransfersFromInstruction(
 				Sender:       transfer.GetFundingAccount().PublicKey.String(),
 				Receiver:     transfer.GetRecipientAccount().PublicKey.String(),
 				Value:        new(big.Int).SetUint64(*transfer.Lamports),
+				Decimal:      SolanaDecimal,
 			}
 		}
 	case solana.TokenProgramID, solana.Token2022ProgramID:
@@ -539,6 +542,7 @@ func ExtractInitialTransfersFromInstruction(
 				Sender:       from,
 				Receiver:     from,
 				Value:        new(big.Int).SetUint64(*transfer.Amount),
+				Decimal:      *transfer.Decimals,
 			}
 		}
 		if mint, ok := DecodeTokenMintTo(accounts, cix.Data); ok {
@@ -548,6 +552,7 @@ func ExtractInitialTransfersFromInstruction(
 				AssetId:      ethereum.BuildChainAssetId(SolanaChainBase, addr),
 				Receiver:     mint.GetDestinationAccount().PublicKey.String(),
 				Value:        new(big.Int).SetUint64(*mint.Amount),
+				Decimal:      AssetDecimal,
 			}
 		}
 	}

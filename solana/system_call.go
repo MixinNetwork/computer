@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"strings"
 
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
@@ -127,16 +128,14 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 		amt := decimal.RequireFromString(output.Amount)
 		isSolAsset := output.ChainId == solanaApp.SolanaChainBase
 		address := output.Asset.AssetKey
+		decimal := output.Asset.Precision
 		if !isSolAsset {
 			da, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
 			if err != nil || da == nil {
 				panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v %v", output.AssetId, da, err))
 			}
 			address = da.Address
-		}
-		decimal := solanaApp.AssetDecimal
-		if output.ChainId == common.SafeSolanaChainId {
-			decimal = output.Asset.Precision
+			decimal = solanaApp.AssetDecimal
 		}
 		ra := &ReferencedTxAsset{
 			Solana:  isSolAsset,
@@ -425,13 +424,17 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		changes[key] = transfer
 	}
 	for address, c := range changes {
+		amount := decimal.NewFromBigInt(c.Value, -int32(c.Decimal))
+		dust := decimal.RequireFromString("0.00000001")
+		if amount.Cmp(dust) < 0 {
+			continue
+		}
 		old := assets[address]
 		if old == nil {
 			return fmt.Errorf("invalid missed user balance change: %s", address)
 		}
-		ea := old.Amount.Mul(decimal.New(1, int32(old.Decimal))).BigInt()
-		if ea.Cmp(c.Value) != 0 {
-			return fmt.Errorf("invalid user balance change: %s %s %s", address, c.Value.String(), ea.String())
+		if old.Amount.Cmp(amount) != 0 {
+			return fmt.Errorf("invalid user balance change: %s %s %s", address, amount.String(), old.Amount.String())
 		}
 	}
 	return nil
@@ -482,12 +485,16 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 			actualChanges[key] = t.Value
 		}
 	}
-	for key, actual := range actualChanges {
-		expected := expectedChanges[key]
-		if expected == nil {
+	for key, expected := range expectedChanges {
+		address := strings.Split(key, ":")[1]
+		if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
+			continue
+		}
+		actual := actualChanges[key]
+		if actual == nil {
 			return fmt.Errorf("non-existed deposit: %s %s %s", signature, key, tx.MustToBase64())
 		}
-		if expected.Cmp(actual) != 0 {
+		if actual.Cmp(expected) != 0 {
 			return fmt.Errorf("invalid deposit: %s %s %s %s %s", signature, key, expected.String(), actual.String(), tx.MustToBase64())
 		}
 	}

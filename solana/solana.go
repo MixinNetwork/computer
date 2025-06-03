@@ -400,11 +400,11 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 				panic(fmt.Errorf("store.ReadDeployedAssetByAddress(%s) => %v %v", address, da, err))
 			}
 			isSolAsset := true
+			chainId := solanaApp.SolanaChainBase
 			assetId := ethereum.BuildChainAssetId(solanaApp.SolanaChainBase, address)
 			if address == solanaApp.SolanaEmptyAddress {
 				assetId = solanaApp.SolanaChainBase
 			}
-			chainId := solanaApp.SolanaChainBase
 			if da != nil {
 				isSolAsset = false
 				assetId = da.AssetId
