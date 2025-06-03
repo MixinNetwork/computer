@@ -142,7 +142,7 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 		if _, ok := changes[key]; !ok {
 			continue
 		}
-		decimal := uint8(9)
+		decimal := uint8(solanaApp.SolanaDecimal)
 		if transfer.TokenAddress != solanaApp.SolanaEmptyAddress {
 			asset, err := node.RPCGetAsset(ctx, transfer.TokenAddress)
 			if err != nil {
@@ -541,10 +541,10 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 			continue
 		}
 		change := decimal.NewFromUint64(meta.PostBalances[index]).Sub(decimal.NewFromUint64(meta.PreBalances[index]))
-		change = change.Div(decimal.New(1, 9))
+		change = change.Div(decimal.New(1, solanaApp.SolanaDecimal))
 		changes[solanaApp.SolanaEmptyAddress] = &BalanceChange{
 			Amount:   change,
-			Decimals: 9,
+			Decimals: solanaApp.SolanaDecimal,
 		}
 	}
 

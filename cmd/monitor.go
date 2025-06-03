@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	"github.com/MixinNetwork/computer/apps/solana"
 	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/logger"
@@ -133,7 +134,7 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		if err != nil {
 			return "", err
 		}
-		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, 9)).String())
+		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String())
 	}
 
 	state = state + fmt.Sprintf("🦷 Binary version: %s", version)

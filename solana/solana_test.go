@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MixinNetwork/mixin/crypto"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
-	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/computer/store"
+	"github.com/MixinNetwork/mixin/crypto"
+	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gofrs/uuid/v5"
@@ -63,7 +63,7 @@ func TestSolana(t *testing.T) {
 		payer.PublicKey(),
 	).Build())
 	b.AddInstruction(system.NewTransferInstruction(
-		decimal.New(1, 9).Mul(amount).BigInt().Uint64(),
+		decimal.New(1, solanaApp.SolanaDecimal).Mul(amount).BigInt().Uint64(),
 		addr,
 		addr,
 	).Build())
