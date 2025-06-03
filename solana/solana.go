@@ -221,7 +221,7 @@ func (node *Node) InitializeAccount(ctx context.Context, user *store.User) error
 }
 
 func (node *Node) CreateMintsTransaction(ctx context.Context, as []string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
-	tid := fmt.Sprintf("OBSERVER:%s:MEMBERS:%v:%d", node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
+	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
 	var assets []*solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
 		tid = common.UniqueId(tid, common.SafeLitecoinChainId)
