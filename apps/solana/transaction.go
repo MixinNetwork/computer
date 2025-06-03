@@ -130,7 +130,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		)
 		builder.AddInstruction(
 			token.NewInitializeMint2InstructionBuilder().
-				SetDecimals(uint8(asset.Asset.Precision)).
+				SetDecimals(uint8(AssetDecimal)).
 				SetMintAuthority(payer).
 				SetMintAccount(solana.MustPublicKeyFromBase58(asset.Address)).Build(),
 		)

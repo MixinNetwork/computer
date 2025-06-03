@@ -421,7 +421,7 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 		if !common.CheckTestEnvironment(ctx) { // TODO should not skip the test
 			mint, err := node.RPCGetAsset(ctx, address)
 			if err != nil || mint == nil ||
-				mint.Decimals != uint32(asset.Precision) ||
+				mint.Decimals != uint32(solanaApp.AssetDecimal) ||
 				mint.MintAuthority != node.getMTGAddress(ctx).String() ||
 				mint.FreezeAuthority != "" {
 				// TODO check symbol and name
@@ -432,7 +432,7 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 			AssetId:  assetId,
 			ChainId:  asset.ChainID,
 			Address:  address,
-			Decimals: int64(asset.Precision),
+			Decimals: int64(solanaApp.AssetDecimal),
 			Asset:    asset,
 		})
 		logger.Verbosef("processDeployExternalAssets() => %s %s", assetId, address)
@@ -780,7 +780,12 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if err != nil {
 			panic(err)
 		}
-		expected := mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(asset.Precision)).String())
+		var expected mc.Integer
+		if asset.ChainID == common.SafeSolanaChainId {
+			expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(asset.Precision)).String())
+		} else {
+			expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(solanaApp.AssetDecimal)).String())
+		}
 		actual := mc.NewIntegerFromString(out.Amount.String())
 		if expected.Cmp(actual) != 0 {
 			panic(fmt.Errorf("invalid deposit amount: %s %s", expected.String(), actual.String()))

@@ -134,10 +134,14 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 			}
 			address = da.Address
 		}
+		decimal := solanaApp.AssetDecimal
+		if output.ChainId == common.SafeSolanaChainId {
+			decimal = output.Asset.Precision
+		}
 		ra := &ReferencedTxAsset{
 			Solana:  isSolAsset,
 			Address: address,
-			Decimal: output.Asset.Precision,
+			Decimal: decimal,
 			Amount:  amt,
 			AssetId: output.AssetId,
 			ChainId: output.Asset.ChainID,
