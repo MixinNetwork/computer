@@ -120,7 +120,7 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 	}
 	m := mtg.EncodeMixinExtraBase64(node.conf.AppId, memo)
 	if len([]byte(m)) <= mc.ExtraSizeGeneralLimit {
-		_, err := common.SendTransactionUntilSufficient(ctx, node.mixin, []string{node.mixin.ClientID}, 1, receivers, threshold, amt, traceId, assetId, m, references, node.conf.MTG.App.SpendPrivateKey)
+		_, err := common.SendTransactionUntilSufficient(ctx, node.wallet, node.mixin, receivers, threshold, amt, traceId, assetId, m, references, node.conf.MTG.App.SpendPrivateKey)
 		logger.Printf("node.SendTransactionUntilSufficient(%s) => %v", traceId, err)
 		return err
 	}
@@ -129,7 +129,7 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 		panic(err)
 	}
 
-	_, err := common.CreateObjectStorageUntilSufficient(ctx, node.mixin, []*bot.TransactionRecipient{{
+	_, err := common.CreateObjectStorageUntilSufficient(ctx, node.wallet, node.mixin, []*bot.TransactionRecipient{{
 		MixAddress: bot.NewUUIDMixAddress(node.conf.MTG.Genesis.Members, byte(node.conf.MTG.Genesis.Threshold)),
 		Amount:     amount,
 	}}, []byte(m), traceId, *node.SafeUser())

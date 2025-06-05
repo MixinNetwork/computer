@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/multi-party-sig/pkg/party"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gofrs/uuid/v5"
@@ -689,7 +689,7 @@ func testBuildNode(ctx context.Context, require *require.Assertions, root string
 	require.Nil(err)
 	group.EnableDebug()
 
-	node := NewNode(kd, group, nil, conf.Computer, nil)
+	node := NewNode(kd, group, nil, conf.Computer, nil, nil)
 	group.AttachWorker(node.conf.AppId, node)
 	return node, md
 }

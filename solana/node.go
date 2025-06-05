@@ -33,9 +33,10 @@ type Node struct {
 
 	solana *solanaApp.Client
 	mixin  *mixin.Client
+	wallet *common.MixinWallet
 }
 
-func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, conf *Configuration, mixin *mixin.Client) *Node {
+func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, conf *Configuration, mixin *mixin.Client, wallet *common.MixinWallet) *Node {
 	node := &Node{
 		id:         party.ID(conf.MTG.App.AppId),
 		threshold:  conf.Threshold,
@@ -47,6 +48,7 @@ func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, conf 
 		operations: make(map[string]bool),
 		store:      store,
 		mixin:      mixin,
+		wallet:     wallet,
 		solana:     solanaApp.NewClient(conf.SolanaRPC),
 	}
 

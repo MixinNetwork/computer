@@ -7,6 +7,7 @@ import (
 
 	"github.com/MixinNetwork/computer/config"
 	computer "github.com/MixinNetwork/computer/solana"
+	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/messenger"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/fox-one/mixin-sdk-go/v2"
@@ -34,10 +35,6 @@ func ComputerBootCmd(c *cli.Context) error {
 		return err
 	}
 	defer db.Close()
-	err = mtg.MigrateSchema(ctx, db)
-	if err != nil {
-		return err
-	}
 
 	group, err := mtg.BuildGroup(ctx, db, mc.Computer.MTG)
 	if err != nil {
@@ -76,7 +73,15 @@ func ComputerBootCmd(c *cli.Context) error {
 		return err
 	}
 	defer kd.Close()
-	computer := computer.NewNode(kd, group, messenger, mc.Computer, client)
+	wd, err := common.OpenWalletSQLite3Store(mc.Computer.StoreDir + "/wallet.sqlite3")
+	if err != nil {
+		return err
+	}
+	defer wd.Close()
+
+	mw := common.NewMixinWallet(client, wd, mc.Computer.MTG.Genesis.Epoch)
+	computer := computer.NewNode(kd, group, messenger, mc.Computer, client, mw)
+	mw.Boot(ctx)
 	computer.Boot(ctx, version)
 
 	if mmc := mc.Computer.MonitorConversationId; mmc != "" {

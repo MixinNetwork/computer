@@ -91,7 +91,7 @@ func (node *Node) processAssetIcon(ctx context.Context, asset *bot.AssetNetwork)
 	traceId := common.UniqueId(node.group.GenesisId(), asset.AssetID)
 	traceId = common.UniqueId(traceId, node.SafeUser().SpendPrivateKey)
 	traceId = common.UniqueId(traceId, "icon")
-	hash, err := common.CreateObjectStorageUntilSufficient(ctx, node.mixin, nil, data, traceId, *node.SafeUser())
+	hash, err := common.CreateObjectStorageUntilSufficient(ctx, node.wallet, node.mixin, nil, data, traceId, *node.SafeUser())
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +128,7 @@ func (node *Node) checkExternalAssetUri(ctx context.Context, asset *bot.AssetNet
 	traceId := common.UniqueId(node.group.GenesisId(), asset.AssetID)
 	traceId = common.UniqueId(traceId, node.SafeUser().SpendPrivateKey)
 	traceId = common.UniqueId(traceId, "metadata")
-	hash, err := common.CreateObjectStorageUntilSufficient(ctx, node.mixin, nil, data, traceId, *node.SafeUser())
+	hash, err := common.CreateObjectStorageUntilSufficient(ctx, node.wallet, node.mixin, nil, data, traceId, *node.SafeUser())
 	if err != nil {
 		return "", err
 	}
