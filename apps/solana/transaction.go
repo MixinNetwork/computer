@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/MixinNetwork/safe/common"
-	sc "github.com/blocto/solana-go-sdk/common"
-	meta "github.com/blocto/solana-go-sdk/program/metaplex/token_metadata"
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
@@ -135,10 +133,6 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 				SetMintAccount(solana.MustPublicKeyFromBase58(asset.Address)).Build(),
 		)
 
-		pda, _, err := solana.FindTokenMetadataAddress(mint)
-		if err != nil {
-			return nil, err
-		}
 		name := asset.Asset.Name
 		if len(name) > maxNameLength {
 			name = name[:maxNameLength]
@@ -149,21 +143,20 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		}
 		builder.AddInstruction(
 			CustomInstruction{
-				Instruction: meta.CreateMetadataAccountV3(meta.CreateMetadataAccountV3Param{
-					Metadata:                sc.PublicKeyFromString(pda.String()),
-					Mint:                    sc.PublicKeyFromString(mint.String()),
-					MintAuthority:           sc.PublicKeyFromString(payer.String()),
-					Payer:                   sc.PublicKeyFromString(payer.String()),
-					UpdateAuthority:         sc.PublicKeyFromString(mtg.String()),
-					UpdateAuthorityIsSigner: false,
-					IsMutable:               false,
-					Data: meta.DataV2{
-						Name:                 name,
-						Symbol:               symbol,
-						Uri:                  asset.Uri,
-						SellerFeeBasisPoints: 0,
+				Instruction: NewMetaplexCreateV1Instruction(
+					MetaAccounts{
+						Mint:            mint,
+						MintAuthority:   payer,
+						Payer:           payer,
+						UpdateAuthority: mtg,
 					},
-				}),
+					MetadataArgs{
+						Name:     name,
+						Symbol:   symbol,
+						Uri:      asset.Uri,
+						Decimals: AssetDecimal,
+					},
+				),
 			},
 		)
 

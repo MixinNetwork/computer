@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
@@ -88,6 +90,43 @@ func TestGetNonceAccountHash(t *testing.T) {
 	hash, err := rpcClient.GetNonceAccountHash(ctx, key)
 	require.Nil(err)
 	require.Equal(testNonceAccountHash, hash.String())
+}
+
+func TestCreateV1(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	rpc := testRpcEndpoint
+	if er := os.Getenv("SOLANARPC"); er != "" {
+		rpc = er
+	}
+	rpcClient := solanaApp.NewClient(rpc)
+
+	mint := solana.MustPrivateKeyFromBase58("bH2GaiFeQVbPKitvweDD9ae8i2peb6QohWZTxBRJKP37siCsWte8HAd9uvbP7dqsL25HUWSDuFKfnPjAyydTnJC")
+	tx, err := rpcClient.CreateMints(
+		ctx,
+		solana.MPK("5ECPyQVa9gZuig8guSmofttMfYjCMRxqa6nCciFTrsTB"),
+		solana.MPK("5v1eqBfJQkX4JYCi43v7eApXERTNakRBJX1d6Ax6KRzK"),
+		[]*solanaApp.DeployedAsset{
+			{
+				Address: "AnF3RoYAxAETRPAddDWtMET5wL83uzEmbUjkHE93zsHS",
+				Uri:     "https://kernel.mixin.dev/objects/9cfd190f6d87070dac3db4209f4f1db8925a59f668e2befd7b8f4c43927526e6",
+				Asset: &bot.AssetNetwork{
+					Name:   "amituofo2",
+					Symbol: "AMI",
+				},
+				PrivateKey: &mint,
+			},
+		},
+		1461600,
+	)
+	require.Nil(err)
+	fmt.Println(tx)
+
+	ins := tx.Message.Instructions[2]
+	require.Equal(
+		"2a0009000000616d6974756f666f3203000000414d496100000068747470733a2f2f6b65726e656c2e6d6978696e2e6465762f6f626a656374732f3963666431393066366438373037306461633364623432303966346631646238393235613539663636386532626566643762386634633433393237353236653600000101000000490344a1ba98fc23c897fcf1215189b5b23965911e580f6e6a37d071a29cd69c006400010200000000010800",
+		hex.EncodeToString(ins.Data),
+	)
 }
 
 func testFROSTSign(ctx context.Context, require *require.Assertions, nodes []*Node, nonce, public string, tx *solana.Transaction) {
