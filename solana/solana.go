@@ -45,7 +45,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 			continue
 		}
 
-		rentExemptBalance, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
+		rentExemptBalance, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
 		if err != nil {
 			panic(err)
 		}
