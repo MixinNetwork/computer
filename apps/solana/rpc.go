@@ -69,7 +69,7 @@ func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.G
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("solana.RPCGetBlockByHeight(%d) => %v", height, err)
 		}
 		return block, nil
 	}
@@ -98,7 +98,7 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("solana.RPCGetAsset(%s) => %v", address, err)
 		}
 		data, err := account.Value.Data.MarshalJSON()
 		if err != nil {
@@ -164,7 +164,10 @@ func (c *Client) RPCGetMultipleAccounts(ctx context.Context, accounts solana.Pub
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		return as, err
+		if err != nil {
+			return nil, fmt.Errorf("solana.RPCGetMultipleAccounts() => %v", err)
+		}
+		return as, nil
 	}
 }
 
@@ -200,7 +203,10 @@ func (c *Client) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataS
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		return r, err
+		if err != nil {
+			return 0, fmt.Errorf("solana.RPCGetMultipleAccounts() => %v", err)
+		}
+		return r, nil
 	}
 }
 
