@@ -60,7 +60,7 @@ func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.G
 	for {
 		block, err := c.rpcClient.GetBlockWithOpts(ctx, height, &rpc.GetBlockOpts{
 			Encoding:                       solana.EncodingBase64,
-			Commitment:                     rpc.CommitmentProcessed,
+			Commitment:                     rpc.CommitmentConfirmed, // getBlock requires this min level
 			MaxSupportedTransactionVersion: &rpc.MaxSupportedTransactionVersion1,
 			TransactionDetails:             rpc.TransactionDetailsFull,
 		})
