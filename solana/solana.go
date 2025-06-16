@@ -38,21 +38,15 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		if err != nil {
 			panic(err)
 		}
-		height, err := node.readSolanaCachedHeight(ctx)
+		height, err := node.solana.RPCGetConfirmedHeight(ctx)
 		if err != nil {
-			panic(err)
+			logger.Printf("solana.RPCGetBlockHeight => %v", err)
+			time.Sleep(time.Second * 5)
+			continue
 		}
 		if checkpoint+SolanaBlockBatch > int64(height) {
-			height, err = node.solana.RPCGetConfirmedHeight(ctx)
-			if err != nil {
-				logger.Printf("solana.RPCGetBlockHeight => %v", err)
-				time.Sleep(time.Second * 5)
-				continue
-			}
-			err = node.writeRequestNumber(ctx, store.SolanaCachedHeightKey, int64(height))
-			if err != nil {
-				panic(err)
-			}
+			time.Sleep(time.Second * 30)
+			continue
 		}
 
 		rentExemptBalance, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
@@ -62,11 +56,12 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 
 		var wg sync.WaitGroup
 		for range SolanaBlockBatch {
-			checkpoint = checkpoint + 1
-			if checkpoint+SolanaBlockDelay > int64(height)+1 {
+			ckpt := checkpoint + 1
+			if ckpt+SolanaBlockDelay > int64(height)+1 {
 				break
 			}
 			wg.Add(1)
+			checkpoint = ckpt
 			go func(current int64) {
 				defer wg.Done()
 				err := node.solanaReadBlock(ctx, current, rentExemptBalance)
@@ -74,7 +69,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 				if err != nil {
 					panic(err)
 				}
-			}(checkpoint)
+			}(ckpt)
 		}
 		wg.Wait()
 
