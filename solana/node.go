@@ -154,6 +154,14 @@ func (node *Node) readSolanaBlockCheckpoint(ctx context.Context) (int64, error) 
 	return height, nil
 }
 
+func (node *Node) readSolanaCachedHeight(ctx context.Context) (uint64, error) {
+	height, err := node.readRequestNumber(ctx, store.SolanaCachedHeightKey)
+	if err != nil || height == 0 {
+		return 0, err
+	}
+	return uint64(height), nil
+}
+
 func (node *Node) readPropertyAsTime(ctx context.Context, key string) time.Time {
 	val, err := node.store.ReadProperty(ctx, key)
 	if err != nil {

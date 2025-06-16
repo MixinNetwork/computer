@@ -38,11 +38,21 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		if err != nil {
 			panic(err)
 		}
-		height, err := node.solana.RPCGetConfirmedHeight(ctx)
+		height, err := node.readSolanaCachedHeight(ctx)
 		if err != nil {
-			logger.Printf("solana.RPCGetBlockHeight => %v", err)
-			time.Sleep(time.Second * 5)
-			continue
+			panic(err)
+		}
+		if checkpoint+SolanaBlockBatch > int64(height) {
+			height, err = node.solana.RPCGetConfirmedHeight(ctx)
+			if err != nil {
+				logger.Printf("solana.RPCGetBlockHeight => %v", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			err = node.writeRequestNumber(ctx, store.SolanaCachedHeightKey, int64(height))
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		rentExemptBalance, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
