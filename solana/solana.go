@@ -81,7 +81,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 }
 
 func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
-	block, err := node.RPCGetBlockByHeight(ctx, uint64(checkpoint))
+	block, err := node.solana.RPCGetBlockByHeight(ctx, uint64(checkpoint))
 	if err != nil {
 		if strings.Contains(err.Error(), "was skipped, or missing") {
 			return nil

@@ -228,37 +228,6 @@ func (node *Node) RPCGetAsset(ctx context.Context, account string) (*solanaApp.A
 	return asset, nil
 }
 
-func (node *Node) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.GetBlockResult, error) {
-	key := fmt.Sprintf("getBlock:%d", height)
-	value, err := node.store.ReadCache(ctx, key)
-	if err != nil {
-		panic(err)
-	}
-
-	if value != "" {
-		var b rpc.GetBlockResult
-		err = json.Unmarshal(common.DecodeHexOrPanic(value), &b)
-		if err != nil {
-			panic(err)
-		}
-		return &b, nil
-	}
-
-	block, err := node.solana.RPCGetBlockByHeight(ctx, height)
-	if err != nil {
-		return nil, err
-	}
-	b, err := json.Marshal(block)
-	if err != nil {
-		panic(err)
-	}
-	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b))
-	if err != nil {
-		panic(err)
-	}
-	return block, nil
-}
-
 func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataSize uint64) (uint64, error) {
 	key := fmt.Sprintf("getMinimumBalanceForRentExemption:%d", dataSize)
 	value, err := node.store.ReadCache(ctx, key)
