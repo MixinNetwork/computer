@@ -75,7 +75,6 @@ func ComputerBootCmd(c *cli.Context) error {
 	defer wd.Close()
 	mw := common.NewMixinWallet(client, wd, mc.Computer.MTG.Genesis.Epoch)
 	mw.Boot(ctx)
-	time.Sleep(5 * time.Second)
 
 	kd, err := computer.OpenSQLite3Store(mc.Computer.StoreDir + "/computer.sqlite3")
 	if err != nil {
