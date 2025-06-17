@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/multi-party-sig/common/round"
 	"github.com/MixinNetwork/multi-party-sig/pkg/math/curve"
@@ -18,7 +19,6 @@ import (
 	"github.com/MixinNetwork/multi-party-sig/protocols/frost"
 	"github.com/MixinNetwork/safe/apps/mixin"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/MixinNetwork/safe/signer/protocol"
 	"github.com/gofrs/uuid/v5"
@@ -593,8 +593,11 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	fp := hex.EncodeToString(common.Fingerprint(hex.EncodeToString(public)))
 	key, _, err := node.store.ReadKeyByFingerprint(ctx, fp)
 	logger.Printf("store.ReadKeyByFingerprint(%s) => %s %v", fp, key, err)
-	if err != nil || key == "" {
+	if err != nil {
 		panic(err)
+	}
+	if key == "" {
+		return node.failRequest(ctx, req, "")
 	}
 	if key != hex.EncodeToString(public) {
 		panic(key)
