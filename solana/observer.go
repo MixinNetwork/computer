@@ -33,11 +33,11 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	logger.Printf("bootObserver(%s)", node.id)
 	go node.StartHTTP(version)
 
-	err := node.initMPCKeys(ctx)
+	err := node.sendPriceInfo(ctx)
 	if err != nil {
 		panic(err)
 	}
-	err = node.sendPriceInfo(ctx)
+	err = node.initMPCKeys(ctx)
 	if err != nil {
 		panic(err)
 	}
