@@ -590,18 +590,6 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	if err != nil {
 		panic(err)
 	}
-	fp := hex.EncodeToString(common.Fingerprint(hex.EncodeToString(public)))
-	key, _, err := node.store.ReadKeyByFingerprint(ctx, fp)
-	logger.Printf("store.ReadKeyByFingerprint(%s) => %s %v", fp, key, err)
-	if err != nil {
-		panic(err)
-	}
-	if key == "" {
-		return node.failRequest(ctx, req, "")
-	}
-	if key != hex.EncodeToString(public) {
-		panic(key)
-	}
 
 	sender := req.Output.Senders[0]
 	err = node.store.WriteSessionSignerIfNotExist(ctx, s.Id, sender, public, req.Output.SequencerCreatedAt, sender == string(node.id))
@@ -620,11 +608,20 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	if l := len(signers); l <= node.threshold {
 		panic(s.Id)
 	}
-
 	valid := node.verifySessionHolder(ctx, hex.EncodeToString(public))
 	logger.Printf("node.verifySessionHolder(%x) => %t", public, valid)
 	if !valid {
 		return nil, ""
+	}
+
+	fp := hex.EncodeToString(common.Fingerprint(hex.EncodeToString(public)))
+	key, _, err := node.store.ReadKeyByFingerprint(ctx, fp)
+	logger.Printf("store.ReadKeyByFingerprint(%s) => %s %v", fp, key, err)
+	if err != nil || key == "" {
+		panic(err)
+	}
+	if key != hex.EncodeToString(public) {
+		panic(key)
 	}
 
 	err = node.store.MarkKeyConfirmedWithRequest(ctx, req, hex.EncodeToString(public))
