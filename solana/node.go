@@ -65,8 +65,7 @@ func (node *Node) Boot(ctx context.Context, version string) {
 	go node.bootObserver(ctx, version)
 	go node.bootSigner(ctx)
 
-	mtg := node.getMTGAddress(ctx)
-	logger.Printf("node.Boot(%s, %d, %s)", node.id, node.Index(), mtg.String())
+	logger.Printf("node.Boot(%s, %d)", node.id, node.Index())
 }
 
 func (node *Node) Index() int {
