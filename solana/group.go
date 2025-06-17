@@ -120,7 +120,7 @@ func (node *Node) getActionRole(act byte) byte {
 
 func (node *Node) processRequest(ctx context.Context, req *store.Request) ([]*mtg.Transaction, string) {
 	switch req.Action {
-	case OperationTypeKeygenInput, OperationTypeKeygenOutput:
+	case OperationTypeKeygenInput, OperationTypeKeygenOutput, OperationTypeSetOperationParams:
 	default:
 		count, err := node.store.CountKeys(ctx)
 		if err != nil {

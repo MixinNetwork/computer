@@ -108,6 +108,7 @@ func (node *Node) sendPriceInfo(ctx context.Context) error {
 	}
 	id := common.UniqueId("OperationTypeSetOperationParams", node.conf.OperationPriceAssetId)
 	id = common.UniqueId(id, amount.String())
+	id = common.UniqueId(id, node.group.GroupId)
 	extra := uuid.Must(uuid.FromString(node.conf.OperationPriceAssetId)).Bytes()
 	extra = binary.BigEndian.AppendUint64(extra, uint64(amount.IntPart()))
 	return node.sendObserverTransactionToGroup(ctx, &common.Operation{
