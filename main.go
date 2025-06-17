@@ -22,8 +22,8 @@ func main() {
 		panic("please build the application using make command.")
 	}
 	app := &cli.App{
-		Name:                 "safe",
-		Usage:                "Mixin Safe",
+		Name:                 "computer",
+		Usage:                "Mixin Trusted Computer",
 		Version:              VERSION,
 		EnableBashCompletion: true,
 		Metadata: map[string]any{
@@ -32,14 +32,14 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:   "computer",
+				Name:   "boot",
 				Usage:  "Run the computer node",
 				Action: cmd.ComputerBootCmd,
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "config",
 						Aliases: []string{"c"},
-						Value:   "~/.mixin/safe/config.toml",
+						Value:   "~/.mixin/computer/config.toml",
 						Usage:   "The configuration file path",
 					},
 				},
