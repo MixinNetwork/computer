@@ -68,20 +68,21 @@ func ComputerBootCmd(c *cli.Context) error {
 		return err
 	}
 
-	kd, err := computer.OpenSQLite3Store(mc.Computer.StoreDir + "/computer.sqlite3")
-	if err != nil {
-		return err
-	}
-	defer kd.Close()
 	wd, err := common.OpenWalletSQLite3Store(mc.Computer.StoreDir + "/wallet.sqlite3")
 	if err != nil {
 		return err
 	}
 	defer wd.Close()
-
 	mw := common.NewMixinWallet(client, wd, mc.Computer.MTG.Genesis.Epoch)
-	computer := computer.NewNode(kd, group, messenger, mc.Computer, client, mw)
 	mw.Boot(ctx)
+	time.Sleep(5 * time.Second)
+
+	kd, err := computer.OpenSQLite3Store(mc.Computer.StoreDir + "/computer.sqlite3")
+	if err != nil {
+		return err
+	}
+	defer kd.Close()
+	computer := computer.NewNode(kd, group, messenger, mc.Computer, client, mw)
 	computer.Boot(ctx, version)
 
 	if mmc := mc.Computer.MonitorConversationId; mmc != "" {
