@@ -759,7 +759,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if t.AssetId != out.AssetId {
 			continue
 		}
-		if t.Receiver != node.solanaDepositEntry().String() {
+		if t.Receiver != node.SolanaDepositEntry().String() {
 			continue
 		}
 		user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)

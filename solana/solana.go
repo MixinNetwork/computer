@@ -173,7 +173,7 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			AssetId:     transfer.AssetId,
 			ChainId:     solanaApp.SolanaChainBase,
 			Mint:        solana.MustPublicKeyFromBase58(transfer.TokenAddress),
-			Destination: node.solanaDepositEntry(),
+			Destination: node.SolanaDepositEntry(),
 			Amount:      transfer.Value.Uint64(),
 			Decimals:    decimal,
 		})
@@ -790,7 +790,7 @@ func (node *Node) getMTGAddress(ctx context.Context) solana.PublicKey {
 	return solana.PublicKeyFromBytes(common.DecodeHexOrPanic(key))
 }
 
-func (node *Node) solanaDepositEntry() solana.PublicKey {
+func (node *Node) SolanaDepositEntry() solana.PublicKey {
 	return solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
 }
 

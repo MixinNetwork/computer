@@ -84,6 +84,7 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		return "", err
 	}
 	state = state + fmt.Sprintf("🫰 Withdrawal Transactions: %d\n", len(tl))
+	state = state + fmt.Sprintf("🫰 Solana Deposit Entry: %s\n", node.SolanaDepositEntry())
 
 	state = state + "\n𝗔𝙋𝗣\n"
 	uc, err := store.CountUsers(ctx)
