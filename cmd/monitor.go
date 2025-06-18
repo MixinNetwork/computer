@@ -119,16 +119,23 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 	}
 	state = state + fmt.Sprintf("💍 MSST outputs: %d\n", c)
 	if conf.MTG.App.AppId == conf.ObserverId {
-		xinBalance, err := common.SafeAssetBalanceUntilSufficient(ctx, node.SafeUser(), mtg.StorageAssetId)
+		xinBalance, c, err := common.SafeAssetBalance(ctx, mixin, []string{conf.MTG.App.AppId}, 1, mtg.StorageAssetId)
 		if err != nil {
 			return "", err
 		}
-		state = state + fmt.Sprintf("💍 XIN Balance: %s\n", xinBalance.String())
-		solBalance, err := common.SafeAssetBalanceUntilSufficient(ctx, node.SafeUser(), common.SafeSolanaChainId)
+		state = state + fmt.Sprintf("💍 XIN outputs: %d, total: %s XIN\n", c, xinBalance.String())
+
+		solBalance, c, err := common.SafeAssetBalance(ctx, mixin, []string{conf.MTG.App.AppId}, 1, common.SafeSolanaChainId)
 		if err != nil {
 			return "", err
 		}
-		state = state + fmt.Sprintf("💍 SOL Balance: %s\n", solBalance.String())
+		state = state + fmt.Sprintf("💍 SOL outputs: %d, total: %s SOL\n", c, solBalance.String())
+
+		c, err = node.CountSpareNonceAccounts(ctx)
+		if err != nil {
+			return "", err
+		}
+		state = state + fmt.Sprintf("💍 Spare Nonce Accounts: %d\n", c)
 
 		balance, err := node.GetPayerBalance(ctx)
 		if err != nil {

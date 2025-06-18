@@ -171,3 +171,7 @@ func (node *Node) readPropertyAsTime(ctx context.Context, key string) time.Time 
 func (node *Node) writeRequestTime(ctx context.Context, key string, offset time.Time) error {
 	return node.store.WriteProperty(ctx, key, offset.Format(time.RFC3339Nano))
 }
+
+func (node *Node) CountSpareNonceAccounts(ctx context.Context) (int, error) {
+	return node.store.CountSpareNonceAccounts(ctx)
+}

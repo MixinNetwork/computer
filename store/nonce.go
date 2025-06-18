@@ -225,3 +225,15 @@ func (s *SQLite3Store) CountNonceAccounts(ctx context.Context) (int, error) {
 	}
 	return count, err
 }
+
+func (s *SQLite3Store) CountSpareNonceAccounts(ctx context.Context) (int, error) {
+	query := "SELECT COUNT(*) FROM nonce_accounts WHERE mix IS NULL AND call_id IS NULL"
+	row := s.db.QueryRowContext(ctx, query)
+
+	var count int
+	err := row.Scan(&count)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return count, err
+}
