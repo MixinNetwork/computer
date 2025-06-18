@@ -148,7 +148,7 @@ func (node *Node) writeRequestNumber(ctx context.Context, key string, sequence i
 func (node *Node) readSolanaBlockCheckpoint(ctx context.Context) (int64, error) {
 	height, err := node.readRequestNumber(ctx, store.SolanaScanHeightKey)
 	if err != nil || height == 0 {
-		return 315360000, err
+		return 347569894, err
 	}
 	return height, nil
 }
