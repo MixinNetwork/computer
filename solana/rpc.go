@@ -74,6 +74,10 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
+		if strings.Contains(sendError.Error(), "This transaction has already been processed") {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
 		if strings.Contains(sendError.Error(), "Blockhash not found") {
 			// retry when observer send tx without nonce account
 			if call == nil {
