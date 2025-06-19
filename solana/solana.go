@@ -289,18 +289,25 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 	seed := crypto.Sha256Hash(uuid.Must(uuid.FromString(id)).Bytes())
 	nonce := solanaApp.PrivateKeyFromSeed(seed[:])
 
-	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NonceAccountSize)
-	if err != nil {
-		panic(err)
-	}
-	tx, err := node.solana.CreateNonceAccount(ctx, node.conf.SolanaKey, nonce.String(), rent)
+	acc, err := node.solana.RPCGetAccount(ctx, nonce.PublicKey())
 	if err != nil {
 		return "", "", err
 	}
-	_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
-	if err != nil {
-		return "", "", err
+	if acc == nil {
+		rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NonceAccountSize)
+		if err != nil {
+			panic(err)
+		}
+		tx, err := node.solana.CreateNonceAccount(ctx, node.conf.SolanaKey, nonce.String(), rent)
+		if err != nil {
+			return "", "", err
+		}
+		_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
+		if err != nil {
+			return "", "", err
+		}
 	}
+
 	for {
 		hash, err := node.solana.GetNonceAccountHash(ctx, nonce.PublicKey())
 		if err != nil {
