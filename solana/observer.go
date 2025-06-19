@@ -67,8 +67,19 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 func (node *Node) initMPCKeys(ctx context.Context) error {
 	for {
 		count, err := node.store.CountKeys(ctx)
-		if err != nil || count >= node.conf.MPCKeyNumber {
+		if err != nil {
 			return err
+		}
+		if count >= node.conf.MPCKeyNumber {
+			val, err := node.store.ReadProperty(ctx, store.UserInitializeTimeKey)
+			if err != nil || val != "" {
+				return err
+			}
+			err = node.InitializeAccount(ctx, node.getMTGAddress(ctx).String())
+			if err != nil {
+				return err
+			}
+			return node.writeRequestTime(ctx, store.UserInitializeTimeKey, time.Now())
 		}
 
 		requestAt := node.readPropertyAsTime(ctx, store.KeygenRequestTimeKey)
@@ -280,7 +291,7 @@ func (node *Node) initializeUsers(ctx context.Context) error {
 	}
 
 	for _, u := range us {
-		err := node.InitializeAccount(ctx, u)
+		err := node.InitializeAccount(ctx, u.ChainAddress)
 		if err != nil {
 			return err
 		}

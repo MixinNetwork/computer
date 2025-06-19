@@ -216,8 +216,8 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	}, nil)
 }
 
-func (node *Node) InitializeAccount(ctx context.Context, user *store.User) error {
-	tx, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, user.ChainAddress)
+func (node *Node) InitializeAccount(ctx context.Context, account string) error {
+	tx, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, account)
 	if err != nil {
 		return err
 	}
