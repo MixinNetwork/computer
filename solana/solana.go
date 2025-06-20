@@ -225,7 +225,7 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	return err
 }
 
-func (node *Node) CreateMintsTransaction(ctx context.Context, as []string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
+func (node *Node) CreateMintsTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
 	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
 	var assets []*solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
@@ -248,28 +248,26 @@ func (node *Node) CreateMintsTransaction(ctx context.Context, as []string) (stri
 			},
 		}
 	} else {
-		for _, asset := range as {
-			na, err := common.SafeReadAssetUntilSufficient(ctx, asset)
-			if err != nil {
-				return "", nil, nil, err
-			}
-			uri, err := node.checkExternalAssetUri(ctx, na)
-			if err != nil {
-				return "", nil, nil, err
-			}
-			tid = common.UniqueId(tid, fmt.Sprintf("metadata-%s", asset))
-			id := common.UniqueId(node.group.GenesisId(), tid)
-			id = common.UniqueId(id, node.SafeUser().SpendPrivateKey)
-			seed := crypto.Sha256Hash([]byte(id))
-			key := solanaApp.PrivateKeyFromSeed(seed[:])
-			assets = append(assets, &solanaApp.DeployedAsset{
-				AssetId:    asset,
-				Address:    key.PublicKey().String(),
-				Uri:        uri,
-				Asset:      na,
-				PrivateKey: &key,
-			})
+		na, err := common.SafeReadAssetUntilSufficient(ctx, asset)
+		if err != nil {
+			return "", nil, nil, err
 		}
+		uri, err := node.checkExternalAssetUri(ctx, na)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		tid = common.UniqueId(tid, fmt.Sprintf("metadata-%s", asset))
+		id := common.UniqueId(node.group.GenesisId(), tid)
+		id = common.UniqueId(id, node.SafeUser().SpendPrivateKey)
+		seed := crypto.Sha256Hash([]byte(id))
+		key := solanaApp.PrivateKeyFromSeed(seed[:])
+		assets = append(assets, &solanaApp.DeployedAsset{
+			AssetId:    asset,
+			Address:    key.PublicKey().String(),
+			Uri:        uri,
+			Asset:      na,
+			PrivateKey: &key,
+		})
 	}
 
 	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)

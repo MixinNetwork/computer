@@ -310,7 +310,6 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 		return err
 	}
 
-	var as []string
 	for _, a := range es {
 		old, err := node.store.ReadDeployedAsset(ctx, a.AssetId)
 		if err != nil {
@@ -319,45 +318,42 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 		if old != nil {
 			continue
 		}
-		as = append(as, a.AssetId)
-	}
-	if len(as) == 0 {
-		return nil
-	}
 
-	id, tx, assets, err := node.CreateMintsTransaction(ctx, as)
-	if err != nil || tx == nil {
-		return err
-	}
-	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
-	_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
-	if err != nil {
-		panic(err)
-	}
-	rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, nil)
-	if err != nil {
-		return err
-	}
-	tx, err = rpcTx.Transaction.GetTransaction()
-	if err != nil {
-		return err
-	}
+		id, tx, assets, err := node.CreateMintsTransaction(ctx, a.AssetId)
+		if err != nil || tx == nil {
+			return err
+		}
+		payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
+		_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
+		if err != nil {
+			panic(err)
+		}
+		rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, nil)
+		if err != nil {
+			return err
+		}
+		tx, err = rpcTx.Transaction.GetTransaction()
+		if err != nil {
+			return err
+		}
 
-	extra := []byte{byte(len(assets))}
-	for _, asset := range assets {
-		extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
-		extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
-	}
-	err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
-		Id:    id,
-		Type:  OperationTypeDeployExternalAssets,
-		Extra: extra,
-	}, nil)
-	if err != nil {
-		return err
-	}
+		extra := []byte{byte(len(assets))}
+		for _, asset := range assets {
+			extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
+			extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
+		}
+		err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
+			Id:    id,
+			Type:  OperationTypeDeployExternalAssets,
+			Extra: extra,
+		}, nil)
+		if err != nil {
+			return err
+		}
 
-	return node.store.MarkExternalAssetDeployed(ctx, assets, tx.Signatures[0].String())
+		return node.store.MarkExternalAssetDeployed(ctx, assets, tx.Signatures[0].String())
+	}
+	return nil
 }
 
 func (node *Node) createNonceAccounts(ctx context.Context) error {
