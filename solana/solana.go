@@ -89,9 +89,6 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 
 	block, err := node.solana.RPCGetBlockByHeight(ctx, uint64(checkpoint))
 	if err != nil {
-		if strings.Contains(err.Error(), "was skipped, or missing") {
-			return nil
-		}
 		return err
 	}
 
