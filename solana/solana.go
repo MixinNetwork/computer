@@ -89,6 +89,10 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 
 	block, err := node.solana.RPCGetBlockByHeight(ctx, uint64(checkpoint))
 	if err != nil {
+		if strings.Contains(err.Error(), "was skipped, or missing") {
+			// solana blockchain may actually skip some blocks, e.g. 332487888
+			return nil
+		}
 		return err
 	}
 
