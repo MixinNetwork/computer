@@ -89,13 +89,13 @@ func (s SQLite3Store) WriteBlockCheckpointAndClearCache(ctx context.Context, che
 	}
 	defer common.Rollback(tx)
 
-	err = s.writeProperty(ctx, tx, SolanaScanHeightKey, fmt.Sprintf("%d", checkpoint))
+	err = s.writeProperty(ctx, tx, SolanaScanHeightKey, fmt.Sprint(checkpoint))
 	if err != nil {
 		return err
 	}
 
-	query := "DELETE FROM caches WHERE key LIKE 'block:%'"
-	_, err = tx.ExecContext(ctx, query)
+	query := "DELETE FROM caches WHERE key LIKE ? AND created_at<?"
+	_, err = tx.ExecContext(ctx, query, "block:%", time.Now().Add(-time.Hour))
 	if err != nil {
 		return fmt.Errorf("DELETE caches %v", err)
 	}
