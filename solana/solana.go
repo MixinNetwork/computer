@@ -73,7 +73,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		}
 		wg.Wait()
 
-		err = node.writeRequestNumber(ctx, store.SolanaScanHeightKey, checkpoint)
+		err = node.store.WriteBlockCheckpointAndClearCache(ctx, checkpoint)
 		if err != nil {
 			panic(err)
 		}
@@ -81,6 +81,12 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 }
 
 func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
+	key := fmt.Sprintf("block:%d", checkpoint)
+	val, err := node.store.ReadCache(ctx, key)
+	if err != nil || val != "" {
+		return err
+	}
+
 	block, err := node.solana.RPCGetBlockByHeight(ctx, uint64(checkpoint))
 	if err != nil {
 		if strings.Contains(err.Error(), "was skipped, or missing") {
@@ -95,7 +101,8 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 			return err
 		}
 	}
-	return nil
+
+	return node.store.WriteCache(ctx, key, "processed")
 }
 
 func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, rentExemptBalance uint64) error {
