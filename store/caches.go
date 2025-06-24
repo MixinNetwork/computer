@@ -15,7 +15,7 @@ type Cache struct {
 	CreatedAt time.Time
 }
 
-const cacheTTL = 24 * time.Hour
+const cacheTTL = time.Hour
 
 func (s *SQLite3Store) ReadCache(ctx context.Context, k string) (string, error) {
 	s.mutex.RLock()

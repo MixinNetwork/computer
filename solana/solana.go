@@ -73,7 +73,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		}
 		wg.Wait()
 
-		err = node.store.WriteBlockCheckpointAndClearCache(ctx, checkpoint)
+		err = node.writeBlockCheckpoint(ctx, checkpoint)
 		if err != nil {
 			panic(err)
 		}

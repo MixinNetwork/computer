@@ -79,30 +79,6 @@ func (s *SQLite3Store) ReadProperty(ctx context.Context, k string) (string, erro
 	return k, err
 }
 
-func (s SQLite3Store) WriteBlockCheckpointAndClearCache(ctx context.Context, checkpoint int64) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer common.Rollback(tx)
-
-	err = s.writeProperty(ctx, tx, SolanaScanHeightKey, fmt.Sprint(checkpoint))
-	if err != nil {
-		return err
-	}
-
-	query := "DELETE FROM caches WHERE key LIKE ? AND created_at<?"
-	_, err = tx.ExecContext(ctx, query, "block:%", time.Now().Add(-time.Hour))
-	if err != nil {
-		return fmt.Errorf("DELETE caches %v", err)
-	}
-
-	return tx.Commit()
-}
-
 func (s *SQLite3Store) WriteProperty(ctx context.Context, k, v string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
