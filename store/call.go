@@ -468,6 +468,11 @@ func (s *SQLite3Store) ListSignedCalls(ctx context.Context) (map[string]*SystemC
 	return callMap, nil
 }
 
+func (s *SQLite3Store) ListSubCalls(ctx context.Context, id string) ([]*SystemCall, error) {
+	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE id!=? AND superior_id=? ORDER BY created_at ASC LIMIT 2", strings.Join(systemCallCols, ","))
+	return s.listSystemCallsByQuery(ctx, query, id, id)
+}
+
 func (s *SQLite3Store) listSystemCallsByQuery(ctx context.Context, query string, params ...any) ([]*SystemCall, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()

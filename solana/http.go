@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/computer/store"
+	"github.com/MixinNetwork/safe/common"
 	"github.com/dimfeld/httptreemux/v5"
 	"github.com/shopspring/decimal"
 )
@@ -111,26 +111,8 @@ func (node *Node) httpGetSystemCall(w http.ResponseWriter, r *http.Request, para
 		common.RenderJSON(w, r, http.StatusNotFound, map[string]any{"error": "404"})
 		return
 	}
-	var state string
-	switch call.State {
-	case common.RequestStateInitial:
-		state = "initial"
-	case common.RequestStatePending:
-		state = "pending"
-	case common.RequestStateDone:
-		state = "done"
-	case common.RequestStateFailed:
-		state = "failed"
-	}
 
-	resp := map[string]any{
-		"id":            call.RequestId,
-		"user_id":       call.UserIdFromPublicPath(),
-		"nonce_account": call.NonceAccount,
-		"raw":           call.Raw,
-		"state":         state,
-		"hash":          call.Hash.String,
-	}
+	resp := buildSystemCallView(call)
 	if call.State == common.RequestStateFailed {
 		reason, err := node.store.ReadFailReason(ctx, call.RequestId)
 		if err != nil {
@@ -138,6 +120,14 @@ func (node *Node) httpGetSystemCall(w http.ResponseWriter, r *http.Request, para
 			return
 		}
 		resp["reason"] = reason
+	}
+	if call.Type == store.CallTypeMain {
+		subs, err := node.store.ListSubCalls(ctx, call.RequestId)
+		if err != nil {
+			common.RenderError(w, r, err)
+			return
+		}
+		resp["subs"] = buildSystemCallViews(subs)
 	}
 
 	common.RenderJSON(w, r, http.StatusOK, resp)
@@ -293,4 +283,35 @@ func (node *Node) httpGetFeeOnXIN(w http.ResponseWriter, r *http.Request, params
 		"fee_id":     fee.Id,
 		"xin_amount": xinAmount,
 	})
+}
+
+func buildSystemCallView(call *store.SystemCall) map[string]any {
+	var state string
+	switch call.State {
+	case common.RequestStateInitial:
+		state = "initial"
+	case common.RequestStatePending:
+		state = "pending"
+	case common.RequestStateDone:
+		state = "done"
+	case common.RequestStateFailed:
+		state = "failed"
+	}
+
+	return map[string]any{
+		"id":            call.RequestId,
+		"user_id":       call.UserIdFromPublicPath(),
+		"nonce_account": call.NonceAccount,
+		"raw":           call.Raw,
+		"state":         state,
+		"hash":          call.Hash.String,
+	}
+}
+
+func buildSystemCallViews(calls []*store.SystemCall) []map[string]any {
+	vs := make([]map[string]any, len(calls))
+	for _, c := range calls {
+		vs = append(vs, buildSystemCallView(c))
+	}
+	return vs
 }
