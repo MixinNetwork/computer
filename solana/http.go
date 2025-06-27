@@ -298,20 +298,26 @@ func buildSystemCallView(call *store.SystemCall) map[string]any {
 		state = "failed"
 	}
 
-	return map[string]any{
+	v := map[string]any{
 		"id":            call.RequestId,
-		"user_id":       call.UserIdFromPublicPath(),
+		"type":          call.Type,
 		"nonce_account": call.NonceAccount,
 		"raw":           call.Raw,
 		"state":         state,
 		"hash":          call.Hash.String,
 	}
+	uid := ""
+	if call.Type == store.CallTypeMain {
+		uid = call.UserIdFromPublicPath()
+	}
+	v["user_id"] = uid
+	return v
 }
 
 func buildSystemCallViews(calls []*store.SystemCall) []map[string]any {
 	vs := make([]map[string]any, len(calls))
-	for _, c := range calls {
-		vs = append(vs, buildSystemCallView(c))
+	for i, c := range calls {
+		vs[i] = buildSystemCallView(c)
 	}
 	return vs
 }
