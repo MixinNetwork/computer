@@ -436,9 +436,8 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 
 	out := testBuildObserverRequest(node, id, OperationTypeDeployExternalAssets, extra)
 	for _, node := range nodes {
-		go testStep(ctx, require, node, out)
+		testStep(ctx, require, node, out)
 	}
-	time.Sleep(10 * time.Second)
 
 	err = node.store.MarkExternalAssetDeployed(ctx, assets, "MBsH9LRbrx4u3kMkFkGuDyxjj3Pio55Puwv66dtR2M3CDfaR7Ef7VEKHDGM7GhB3fE1Jzc7k3zEZ6hvJ399UBNi")
 	require.Nil(err)
