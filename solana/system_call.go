@@ -49,6 +49,17 @@ func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, reques
 
 	var storage *crypto.Hash
 	for _, ref := range ver.References {
+		// The subsequent entry for system call should reference the previous entry for system call
+		// to ensure the order when create multiple system calls with invoice.
+		// Thus the output from previous entry for system call should be skipped.
+		request, err := node.store.ReadRequestByHash(ctx, ref.String())
+		if err != nil {
+			return nil, nil, err
+		}
+		if request != nil && request.Action == OperationTypeSystemCall {
+			continue
+		}
+
 		os, hash, err := node.getSystemCallReferenceTx(ctx, uid, ref.String(), state)
 		if err != nil {
 			return nil, nil, err
