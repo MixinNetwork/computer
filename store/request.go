@@ -27,7 +27,8 @@ type Request struct {
 	CreatedAt  time.Time
 	Sequence   uint64
 
-	Output *mtg.Action
+	Restored bool
+	Output   *mtg.Action
 }
 
 func (req *Request) ExtraBytes() []byte {
@@ -157,6 +158,24 @@ func (s *SQLite3Store) FailRequest(ctx context.Context, req *Request, compaction
 	err = s.writeActionResult(ctx, tx, req.Output.OutputId, compaction, txs, req.Id)
 	if err != nil {
 		return err
+	}
+
+	return tx.Commit()
+}
+func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	_, err = tx.ExecContext(ctx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
+		common.RequestStateInitial, time.Now().UTC(), req.Id, common.RequestStateFailed)
+	if err != nil {
+		return fmt.Errorf("UPDATE requests %v", err)
 	}
 
 	return tx.Commit()

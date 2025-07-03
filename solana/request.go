@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -62,7 +62,8 @@ func decodeRequest(out *mtg.Action, extra []byte, role uint8) (*store.Request, e
 		CreatedAt:  out.SequencerCreatedAt,
 		Sequence:   out.Sequence,
 
-		Output: out,
+		Restored: out.Restored(),
+		Output:   out,
 	}
 	return r, r.VerifyFormat()
 }

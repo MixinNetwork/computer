@@ -12,6 +12,8 @@ github.com/MixinNetwork/mixin v0.18.27 h1:dF5WdyenUH0FbuwEO0WkloxTrKJ6Y4h2SNMtTn
 github.com/MixinNetwork/mixin v0.18.27/go.mod h1:4SpfCfGb2MICD4suiSHPJ2E0lAoqwY2PFuBC6OZQLwE=
 github.com/MixinNetwork/multi-party-sig v0.4.1 h1:rQdIVSDQQOUMub8ERDV1gbFHxGSD5/+Ve7gj5hGHiPs=
 github.com/MixinNetwork/multi-party-sig v0.4.1/go.mod h1:mnZyPutnRV2+E6z3v5TpTb7q4HnS7IplS0yy4dPjVGA=
+github.com/MixinNetwork/safe v0.19.4-0.20250702024447-894f0a928384 h1:yKgD9Ip6aC7il4XK62y1YxZvK/SVeL3+vdiVtotiL2c=
+github.com/MixinNetwork/safe v0.19.4-0.20250702024447-894f0a928384/go.mod h1:hY640kMU2l2VI7T4YBNsYl3PP5XSJSabUGReYejXwKc=
 github.com/MixinNetwork/safe v0.19.5-0.20250625102317-26493c151a91 h1:Y15MH8k680qc0+gtUgrKrv4zZAFBPriuvCByfk+rFUM=
 github.com/MixinNetwork/safe v0.19.5-0.20250625102317-26493c151a91/go.mod h1:9KfnzgWgnM457S8+lGxmeUVjR/EL2jcQGedgjd99POk=
 github.com/aead/siphash v1.0.1 h1:FwHfE/T45KPKYuuSAKyyvE+oPWcaQ+CUmFW0bPlM+kg=
