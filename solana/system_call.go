@@ -91,7 +91,9 @@ func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string
 		}
 		if len(value) > 0 {
 			switch hash {
-			case "a8eed784060b200ea7f417309b12a33ced8344c24f5cdbe0237b7fc06125f459", "01c43005fd06e0b8f06a0af04faf7530331603e352a11032afd0fd9dbd84e8ee":
+			case "2e9e56113ac650ebe865762d99b4c80ba83d06b24db1083915af4bc07f0720cd",
+				"a8eed784060b200ea7f417309b12a33ced8344c24f5cdbe0237b7fc06125f459",
+				"01c43005fd06e0b8f06a0af04faf7530331603e352a11032afd0fd9dbd84e8ee":
 				raw := common.DecodeHexOrPanic(value)
 				ver, err = mc.UnmarshalVersionedTransaction(raw)
 				if err != nil {

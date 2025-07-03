@@ -47,22 +47,25 @@ func (node *Node) processAction(ctx context.Context, out *mtg.Action) ([]*mtg.Tr
 	if err != nil {
 		return nil, ""
 	}
+	if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
+		req.Restored = true
+	}
 
 	ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, req.Id)
 	logger.Printf("store.ReadActionResult(%s %s) => %v %t %v", out.OutputId, req.Id, ar, handled, err)
 	if err != nil {
 		panic(err)
 	}
-	if req.Restored && ar.Compaction != "" {
-		err = node.store.ResetRequest(ctx, req)
-		if err != nil {
-			panic(err)
-		}
-		txs, asset := node.processRequest(ctx, req)
-		logger.Printf("node.processRestoredRequest(%v) => %v %s", req, txs, asset)
-		return txs, asset
-	}
 	if ar != nil {
+		if req.Restored && ar.Compaction != "" {
+			err = node.store.ResetRequest(ctx, req)
+			if err != nil {
+				panic(err)
+			}
+			txs, asset := node.processRequest(ctx, req)
+			logger.Printf("node.processRestoredRequest(%v) => %v %s", req, txs, asset)
+			return txs, asset
+		}
 		return ar.Transactions, ar.Compaction
 	}
 	if handled {

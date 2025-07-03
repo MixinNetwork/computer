@@ -51,13 +51,12 @@ func (node *Node) checkTransaction(ctx context.Context, act *mtg.Action, assetId
 		if err != nil {
 			panic(err)
 		}
-	} else {
-		balance := act.CheckAssetBalanceAt(ctx, assetId)
-		logger.Printf("group.CheckAssetBalanceAt(%s, %d) => %s %s %s", assetId, act.Sequence, traceId, amount, balance)
-		amt := decimal.RequireFromString(amount)
-		if balance.Cmp(amt) < 0 {
-			return ""
-		}
+	}
+	balance := act.CheckAssetBalanceAt(ctx, assetId)
+	logger.Printf("group.CheckAssetBalanceAt(%s, %d) => %s %s %s", assetId, act.Sequence, traceId, amount, balance)
+	amt := decimal.RequireFromString(amount)
+	if balance.Cmp(amt) < 0 {
+		return ""
 	}
 
 	nextId := common.UniqueId(node.group.GenesisId(), traceId)

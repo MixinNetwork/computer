@@ -270,7 +270,7 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	flag, extra := extra[0], extra[1:]
 	callId := uuid.Must(uuid.FromBytes(extra[0:16])).String()
 
-	call, err := node.store.ReadSystemCallByRequestId(ctx, callId, common.RequestStateInitial)
+	call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
 	logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
 	if err != nil {
 		panic(err)
@@ -278,11 +278,21 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	if call == nil || call.WithdrawalTraces.Valid {
 		return node.failRequest(ctx, req, "")
 	}
+	// call maybe be failed when re-processing output after compaction
+	outputState := common.RequestStatePending
+	switch call.State {
+	case common.RequestStateInitial:
+	case common.RequestStateFailed:
+		outputState = common.RequestStateDone
+	default:
+		return node.failRequest(ctx, req, "")
+	}
+
 	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
 	if err != nil || user == nil {
 		panic(fmt.Errorf("store.ReadUser(%s) => %v %v", call.UserIdFromPublicPath(), user, err))
 	}
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, byte(outputState))
 	logger.Printf("node.GetSystemCallReferenceTxs(%s) => %v %v", req.MixinHash.String(), os, err)
 	if err != nil {
 		panic(err)
