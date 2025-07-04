@@ -928,7 +928,7 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		sequence += uint64(i + 1)
 	}
 	for i := range 72 {
-		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.00001"))
+		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0003"))
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}

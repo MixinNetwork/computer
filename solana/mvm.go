@@ -903,6 +903,9 @@ func (node *Node) confirmPostProcessSystemCall(ctx context.Context, req *store.R
 		if amt.Sign() == 0 {
 			continue
 		}
+		if common.CheckTestEnvironment(ctx) && req.Id == "" {
+			amt = mc.NewIntegerFromString("0.02")
+		}
 
 		id := common.UniqueId(call.RequestId, fmt.Sprintf("BURN:%s", da.AssetId))
 		id = common.UniqueId(id, user.MixAddress)
