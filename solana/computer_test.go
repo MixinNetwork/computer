@@ -52,6 +52,103 @@ func TestComputer(t *testing.T) {
 	require.Equal("test-error", reason)
 }
 
+func TestCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	user := testUserRequestAddUsers(ctx, require, nodes)
+
+	node := nodes[0]
+	conf := node.conf
+	nonce, err := node.store.ReadNonceAccount(ctx, "DaJw3pa9rxr25AT1HnQnmPvwS4JbnwNvQbNLm8PJRhqV")
+	require.Nil(err)
+	require.False(nonce.Mix.Valid)
+	require.False(nonce.CallId.Valid)
+	err = node.store.LockNonceAccountWithMix(ctx, nonce.Address, user.MixAddress)
+	require.Nil(err)
+
+	id := uuid.Must(uuid.NewV4()).String()
+	var extra []byte
+	extra = append(extra, byte(1))
+	extra = append(extra, uuid.Must(uuid.FromString(mtg.StorageAssetId)).Bytes()...)
+	extra = append(extra, solana.MustPublicKeyFromBase58("4s4H5v4TXpmS4Ss66nxcCLgxrU5nunuwtkQceinZfGuw").Bytes()...)
+	out := testBuildObserverRequest(node, id, OperationTypeDeployExternalAssets, extra)
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+	}
+
+	sequence += 10
+	h1, _ := crypto.HashFromString("2e9e56113ac650ebe865762d99b4c80ba83d06b24db1083915af4bc07f0720cd")
+	_, err = testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, h1.String(), "", sequence, decimal.RequireFromString("0.90432841"))
+	require.Nil(err)
+	oid1, err := uuid.NewV4()
+	require.Nil(err)
+	extra = user.IdBytes()
+	out1 := testBuildUserRequest(node, oid1.String(), h1.String(), "0.904328411", mtg.StorageAssetId, OperationTypeUserDeposit, extra, nil, nil)
+	for _, node := range nodes {
+		err = node.store.WriteProperty(ctx, h1.String(), "77770005a99c2e0e2b1da4d648755ef19bd95139acbbe6564cfb06dec7cd34931ca72cdc0001b98ecfc9b5b8c01e1e94a13c05866eb0bc33c7706ed306c9da60a016945eeddd00000000000000000002000000040563e54900071ede9c0d0680d843eb373883ee7383e6f47b7c5720d8e8176139ba0497893aeb6cc3ba624218f1a144ee98de1426a701b45a6dd7211c52b7e87924d751c58cb95f6e7f7a7d1e8017cda22caec31032aeaf239193093e22bcaf9ca742bf42e60ffb9692f26790ca3e0c11ff06937b2127c26791103d0400e125f698a78f6a8b6ab53fdf5e98ea926e41467a78f3b0a3bf68d1a071033091120280dc29c4d46f37151ec76daeb9cb7b49de47caee7196089a45858e68f4e565637b880877597352b9ea3473d8731e19d54459ca3a5f4793c66898510d15ef88a884b6b69fb6a568d073cff9ad3055d6311a97f81f0123e5e8f42284e2928e1099e1f036489aa5290003fffe050000000000033f50830001a3ec1d124a090ed27c235eaabab677e56dde5ba333397a49c6866285d6a8819c5933073ce8b01423b28160348a022059b77a0ee4f4c737fe0f94f055e7e0a6b30003fffe01000000000000002243735f696548465054507975556e444f4e4f507245514d414151414141414141425100010001000065b555876b9158e109739a09bdd1d69026d42f66290fa7c4e8cf95551d7e12a07d0ae2b04f7dceac3bd6893c0cfe9ec49ce8ebf512ba07be1cd859433785ca03")
+		require.Nil(err)
+		testStep(ctx, require, node, out1)
+		os, err := node.store.ListUserOutputsByHashAndState(ctx, user.UserId, h1.String(), common.RequestStateInitial)
+		require.Nil(err)
+		require.Len(os, 1)
+	}
+
+	cid := uuid.Must(uuid.NewV4()).String()
+	refs := testStorageSystemCall(ctx, nodes, common.DecodeHexOrPanic("02000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000810cdc56c8d087a301b21144b2ab5e1286b50a5d941ee02f62488db0308b943d2d64375bcd5726aadfdd159135441bbe659c705b37025c5c12854e9906ca85002953f9517566994f5066c9478a5e6d0466906e7d844b2d971b2e4f86ff72561c6d6405387e0deff4ac3250e4e4d1986f1bc5e805edd8ca4c48b73b92441afdc070b84fed2e0ca7ecb2a18e32bf10885151641616b3fe4447557683ee699247e1f9cbad4af79952644bd80881b3934b3e278ad2f4eeea3614e1c428350d905eac4ecf6994777d4d13d8bd64679ac9e173a29ea40653734b52eee914ddc43c820f424071d460ef6501203e6656563c4add1638164d5eba1dee13e9085fb60036f98f10000000000000000000000000000000000000000000000000000000000000000816e66630c3bb724dc59e49f6cc4306e603a6aacca06fa3e34e2b40ad5979d8da5d5ca9e04cf5db590b714ba2fe32cb159133fc1c192b72257fd07d39cb0401ec4db1d1f598d6a8197daf51b68d7fc0ef139c4dec5a496bac9679563bd3127db069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f0000000000106a7d517192c568ee08a845f73d29788cf035c3145b21ab344d8062ea940000006a7d517192c5c51218cc94c3d4af17f58daee089ba1fd44e3dbd98a0000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90ff0530009fc7a19cf8d8d0257f1dc2d478f1368aa89f5e546c6e12d8a4015ec020803050d0004040000000a0d0109030c0b020406070f0f080e20e992d18ecf6840bcd564b7ff16977c720000000000000000b992766700000000"))
+	refs = append(refs, []crypto.Hash{h1}...)
+
+	hash := "db7b12b3479896dc7ff2a6815ba6a7e8208166a9f980020577ddd400d92607a9"
+	extra = user.IdBytes()
+	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
+	extra = append(extra, FlagWithPostProcess)
+	out = testBuildUserRequest(node, cid, hash, "0.001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, nil)
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateInitial)
+		require.Nil(err)
+		require.NotNil(call)
+	}
+
+	id = "329346e1-34c2-4de0-8e35-729518eda8bd"
+	extra = []byte{ConfirmFlagNonceExpired}
+	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
+
+	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(call)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal(mtg.StorageAssetId, ar.Compaction)
+		require.Len(ar.Transactions, 0)
+	}
+
+	seq := 0
+	for range 3 {
+		seq += 10000
+		fmt.Println("testWriteOutputForNodes", node.conf.AppId)
+		testWriteOutputForNodes(ctx, mds, node.conf.AppId, mtg.StorageAssetId, "", "", uint64(seq), decimal.RequireFromString("0.36"))
+	}
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(call)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal("", ar.Compaction)
+		require.Len(ar.Transactions, 1)
+	}
+}
+
 func testObserverConfirmPostProcessCall(ctx context.Context, require *require.Assertions, nodes []*Node, sub *store.SystemCall) {
 	node := nodes[0]
 	err := node.store.UpdateNonceAccount(ctx, sub.NonceAccount, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", sub.RequestId)
@@ -589,8 +686,7 @@ func testBuildObserverRequest(node *Node, id string, action byte, extra []byte) 
 }
 
 func testStep(ctx context.Context, require *require.Assertions, node *Node, out *mtg.Action) {
-	txs1, asset := node.ProcessOutput(ctx, out)
-	require.Equal("", asset)
+	txs1, asset1 := node.ProcessOutput(ctx, out)
 	timestamp, err := node.timestamp(ctx)
 	require.Nil(err)
 	require.Equal(out.Sequence, timestamp)
@@ -602,10 +698,10 @@ func testStep(ctx context.Context, require *require.Assertions, node *Node, out 
 	ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, req.Id)
 	require.Nil(err)
 	require.True(handled)
-	require.Equal("", ar.Compaction)
 	txs2 := ar.Transactions
-	txs3, asset := node.ProcessOutput(ctx, out)
-	require.Equal("", asset)
+	txs3, asset3 := node.ProcessOutput(ctx, out)
+	require.Equal(asset1, ar.Compaction)
+	require.Equal(asset1, asset3)
 	for i, tx1 := range txs1 {
 		tx2 := txs2[i]
 		tx3 := txs3[i]
@@ -702,7 +798,7 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		sequence += uint64(i + 1)
 	}
 	for i := range 100 {
-		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.NewFromInt(1))
+		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.01"))
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}

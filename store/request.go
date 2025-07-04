@@ -27,7 +27,8 @@ type Request struct {
 	CreatedAt  time.Time
 	Sequence   uint64
 
-	Output *mtg.Action
+	Restored bool
+	Output   *mtg.Action
 }
 
 func (req *Request) ExtraBytes() []byte {
@@ -161,6 +162,24 @@ func (s *SQLite3Store) FailRequest(ctx context.Context, req *Request, compaction
 
 	return tx.Commit()
 }
+func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	_, err = tx.ExecContext(ctx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
+		common.RequestStateInitial, time.Now().UTC(), req.Id, common.RequestStateFailed)
+	if err != nil {
+		return fmt.Errorf("UPDATE requests %v", err)
+	}
+
+	return tx.Commit()
+}
 
 func (s *SQLite3Store) ReadLatestRequest(ctx context.Context) (*Request, error) {
 	query := fmt.Sprintf("SELECT %s FROM requests ORDER BY created_at DESC, request_id DESC LIMIT 1", strings.Join(requestCols, ","))
@@ -172,6 +191,15 @@ func (s *SQLite3Store) ReadLatestRequest(ctx context.Context) (*Request, error) 
 func (s *SQLite3Store) finishRequest(ctx context.Context, tx *sql.Tx, req *Request, txs []*mtg.Transaction, compaction string) error {
 	err := s.execOne(ctx, tx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
 		common.RequestStateDone, time.Now().UTC(), req.Id, common.RequestStateInitial)
+	if err != nil {
+		return fmt.Errorf("UPDATE requests %v", err)
+	}
+	return s.writeActionResult(ctx, tx, req.Output.OutputId, compaction, txs, req.Id)
+}
+
+func (s *SQLite3Store) failRequest(ctx context.Context, tx *sql.Tx, req *Request, txs []*mtg.Transaction, compaction string) error {
+	err := s.execOne(ctx, tx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
+		common.RequestStateFailed, time.Now().UTC(), req.Id, common.RequestStateInitial)
 	if err != nil {
 		return fmt.Errorf("UPDATE requests %v", err)
 	}

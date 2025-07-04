@@ -3,10 +3,10 @@ module github.com/MixinNetwork/computer
 go 1.24.4
 
 require (
-	github.com/MixinNetwork/bot-api-go-client/v3 v3.16.1
+	github.com/MixinNetwork/bot-api-go-client/v3 v3.16.2
 	github.com/MixinNetwork/mixin v0.18.27
 	github.com/MixinNetwork/multi-party-sig v0.4.1
-	github.com/MixinNetwork/safe v0.19.5-0.20250625102317-26493c151a91
+	github.com/MixinNetwork/safe v0.19.5-0.20250703164552-60cd6874d35b
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/davecgh/go-spew v1.1.1
@@ -49,7 +49,7 @@ require (
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.1 // indirect
-	github.com/ethereum/go-ethereum v1.16.0 // indirect
+	github.com/ethereum/go-ethereum v1.16.1 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fox-one/msgpack v1.0.0 // indirect
