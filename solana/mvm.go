@@ -730,7 +730,8 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 	}
 	if ar != nil {
 		return ar.Transactions, ar.Compaction
-	} else if handled {
+	}
+	if handled {
 		err = node.store.FailAction(ctx, &store.Request{
 			Id:     out.OutputId,
 			Output: out,
@@ -815,9 +816,8 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		txs = append(txs, tx)
 	}
 
-	state := common.RequestStateDone
-	err = node.store.WriteDepositRequestIfNotExist(ctx, out, state, txs, compaction)
-	logger.Printf("store.WriteDepositRequestIfNotExist(%v %d %d %s) => %v", out, state, len(txs), compaction, err)
+	err = node.store.WriteDepositRequestIfNotExist(ctx, out, common.RequestStateDone, txs, compaction)
+	logger.Printf("store.WriteDepositRequestIfNotExist(%v %d %s) => %v", out, len(txs), compaction, err)
 	if err != nil {
 		panic(err)
 	}
