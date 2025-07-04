@@ -215,6 +215,60 @@ func TestDepositCompaction(t *testing.T) {
 	}
 }
 
+func TestPostprocessCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	testObserverUpdateNetworInfo(ctx, require, nodes)
+	testObserverDeployAsset(ctx, require, nodes)
+
+	user := testUserRequestAddUsers(ctx, require, nodes)
+	call := testUserRequestSystemCall(ctx, require, nodes, mds, user)
+	testConfirmWithdrawal(ctx, require, nodes, call)
+	testObserverConfirmMainCall(ctx, require, nodes, call)
+
+	id := "329346e1-34c2-4de0-8e35-729518eda8bd"
+	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
+	extra := []byte{FlagConfirmCallSuccess, 1}
+	extra = append(extra, signature[:]...)
+	for _, node := range nodes {
+		out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
+		testStep(ctx, require, node, out)
+
+		ar, _, err := node.store.ReadActionResult(ctx, id, id)
+		require.Nil(err)
+		require.Len(ar.Transactions, 0)
+		require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+	}
+
+	for range 2 {
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, common.SafeLitecoinChainId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.00001", o.Amount.String())
+			}
+			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.00036"))
+	}
+	for _, node := range nodes {
+		out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
+		testStep(ctx, require, node, out)
+
+		ar, _, err := node.store.ReadActionResult(ctx, id, id)
+		require.Nil(err)
+		require.Len(ar.Transactions, 1)
+		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+	}
+}
+
 func testObserverConfirmPostProcessCall(ctx context.Context, require *require.Assertions, nodes []*Node, sub *store.SystemCall) {
 	node := nodes[0]
 	err := node.store.UpdateNonceAccount(ctx, sub.NonceAccount, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", sub.RequestId)
@@ -873,6 +927,11 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}
+	for i := range 72 {
+		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.00001"))
+		require.Nil(err)
+		sequence += uint64(i + 1)
+	}
 	for _, node := range nodes {
 		os := node.group.ListOutputsForAsset(ctx, conf.AppId, conf.AssetId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
@@ -880,6 +939,8 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		require.Len(os, 110)
 		os = node.group.ListOutputsForAsset(ctx, conf.AppId, common.SafeSolanaChainId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
+		os = node.group.ListOutputsForAsset(ctx, conf.AppId, common.SafeLitecoinChainId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
+		require.Len(os, 72)
 	}
 }
 
