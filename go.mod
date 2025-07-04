@@ -6,7 +6,7 @@ require (
 	github.com/MixinNetwork/bot-api-go-client/v3 v3.16.2
 	github.com/MixinNetwork/mixin v0.18.27
 	github.com/MixinNetwork/multi-party-sig v0.4.1
-	github.com/MixinNetwork/safe v0.19.5-0.20250703164552-60cd6874d35b
+	github.com/MixinNetwork/safe v0.19.5-0.20250704074602-cf3204a6464e
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/davecgh/go-spew v1.1.1
