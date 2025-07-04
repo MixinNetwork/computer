@@ -249,7 +249,7 @@ func TestPostprocessCompaction(t *testing.T) {
 			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, common.SafeLitecoinChainId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
 			require.Len(os, mtg.OutputsBatchSize)
 			for _, o := range os {
-				require.Equal("0.00001", o.Amount.String())
+				require.Equal("0.0003", o.Amount.String())
 			}
 			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
