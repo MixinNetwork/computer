@@ -230,12 +230,13 @@ func TestPostprocessCompaction(t *testing.T) {
 	testConfirmWithdrawal(ctx, require, nodes, call)
 	testObserverConfirmMainCall(ctx, require, nodes, call)
 
+	node := nodes[0]
 	id := "329346e1-34c2-4de0-8e35-729518eda8bd"
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
 	extra := []byte{FlagConfirmCallSuccess, 1}
 	extra = append(extra, signature[:]...)
+	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 	for _, node := range nodes {
-		out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 		testStep(ctx, require, node, out)
 
 		ar, _, err := node.store.ReadActionResult(ctx, id, id)
@@ -256,10 +257,10 @@ func TestPostprocessCompaction(t *testing.T) {
 		}
 
 		sequence += 100
-		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.00036"))
+		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0108"))
 	}
+	out.Sequence = sequence + 100
 	for _, node := range nodes {
-		out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 		testStep(ctx, require, node, out)
 
 		ar, _, err := node.store.ReadActionResult(ctx, id, id)
