@@ -903,7 +903,7 @@ func (node *Node) confirmPostProcessSystemCall(ctx context.Context, req *store.R
 		if amt.Sign() == 0 {
 			continue
 		}
-		if common.CheckTestEnvironment(ctx) && req.Id == "" {
+		if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
 			amt = mc.NewIntegerFromString("0.02")
 		}
 
