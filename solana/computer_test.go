@@ -2,6 +2,7 @@ package solana
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -156,6 +157,61 @@ func TestCompaction(t *testing.T) {
 		require.True(handled)
 		require.Equal("", ar.Compaction)
 		require.Len(ar.Transactions, 1)
+	}
+}
+
+func TestDepositCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	user := testUserRequestAddUsers(ctx, require, nodes)
+
+	node := nodes[0]
+	conf := node.conf
+	nonce, err := node.store.ReadNonceAccount(ctx, "DaJw3pa9rxr25AT1HnQnmPvwS4JbnwNvQbNLm8PJRhqV")
+	require.Nil(err)
+	require.False(nonce.Mix.Valid)
+	require.False(nonce.CallId.Valid)
+	err = node.store.LockNonceAccountWithMix(ctx, nonce.Address, user.MixAddress)
+	require.Nil(err)
+
+	sequence += 10
+	out, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", sequence, decimal.RequireFromString("0.90432841"))
+	out.OutputId = "329346e1-34c2-4de0-8e35-729518eda8bd"
+	out.DepositHash = sql.NullString{Valid: true, String: "6b33cca6e650a1c2abe4122a466eb7d02f7faa47ee935c80536178bacd913a56"}
+	require.Nil(err)
+	a := &mtg.Action{UnifiedOutput: *out}
+	for _, node := range nodes {
+		a.TestAttachActionToGroup(node.group)
+		txs, compaction := node.processDeposit(ctx, a)
+		require.Len(txs, 0)
+		require.Equal(mtg.StorageAssetId, compaction)
+	}
+
+	for range 3 {
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.01", o.Amount.String())
+			}
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+	}
+
+	a.Sequence += sequence + 1000
+	for _, node := range nodes {
+		a.TestAttachActionToGroup(node.group)
+		txs, compaction := node.processDeposit(ctx, a)
+		require.Len(txs, 1)
+		require.Equal("", compaction)
 	}
 }
 
