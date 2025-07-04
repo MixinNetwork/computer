@@ -130,12 +130,22 @@ func TestCompaction(t *testing.T) {
 		require.Len(ar.Transactions, 0)
 	}
 
-	seq := 0
 	for range 3 {
-		seq += 10000
-		fmt.Println("testWriteOutputForNodes", node.conf.AppId)
-		testWriteOutputForNodes(ctx, mds, node.conf.AppId, mtg.StorageAssetId, "", "", uint64(seq), decimal.RequireFromString("0.36"))
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.01", o.Amount.String())
+			}
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
 	}
+
+	out.Sequence += sequence + 1000
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
@@ -797,7 +807,7 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}
-	for i := range 100 {
+	for i := range 110 {
 		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.01"))
 		require.Nil(err)
 		sequence += uint64(i + 1)
@@ -811,7 +821,7 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		os := node.group.ListOutputsForAsset(ctx, conf.AppId, conf.AssetId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
 		os = node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
-		require.Len(os, 100)
+		require.Len(os, 110)
 		os = node.group.ListOutputsForAsset(ctx, conf.AppId, common.SafeSolanaChainId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
 	}
