@@ -729,21 +729,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		panic(err)
 	}
 	if ar != nil {
-		restored := out.Restored()
-		if out.OutputId == "329346e1-34c2-4de0-8e35-729518eda8bd" {
-			restored = true
-		}
-		if ar.Compaction == "" || !restored {
-			return ar.Transactions, ar.Compaction
-		}
-		req, err := decodeRequest(out, nil, 1)
-		if err != nil {
-			panic(err)
-		}
-		err = node.store.ResetRequest(ctx, req)
-		if err != nil {
-			panic(err)
-		}
+		return ar.Transactions, ar.Compaction
 	} else if handled {
 		err = node.store.FailAction(ctx, &store.Request{
 			Id:     out.OutputId,
