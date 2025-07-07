@@ -28,12 +28,12 @@ import (
 
 const (
 	SolanaBlockDelay = 1
-	SolanaBlockBatch = 30
 	SolanaTxRetry    = 10
 )
 
 func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 	for {
+		time.Sleep(time.Second)
 		checkpoint, err := node.readSolanaBlockCheckpoint(ctx)
 		if err != nil {
 			panic(err)
@@ -44,8 +44,8 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 			time.Sleep(time.Second * 5)
 			continue
 		}
-		if checkpoint+SolanaBlockBatch > int64(height) {
-			time.Sleep(time.Second * 30)
+		batch := min(int64(height)-checkpoint, 30)
+		if batch < 3 {
 			continue
 		}
 
@@ -55,7 +55,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		}
 
 		var wg sync.WaitGroup
-		for range SolanaBlockBatch {
+		for range batch {
 			ckpt := checkpoint + 1
 			if ckpt+SolanaBlockDelay > int64(height)+1 {
 				break
@@ -82,7 +82,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 
 func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
 	key := fmt.Sprintf("block:%d", checkpoint)
-	val, err := node.store.ReadCache(ctx, key, store.CacheTTL)
+	val, err := node.store.ReadCache(ctx, key)
 	if err != nil || val != "" {
 		return err
 	}

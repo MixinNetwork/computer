@@ -15,9 +15,9 @@ type Cache struct {
 	CreatedAt time.Time
 }
 
-const CacheTTL = time.Hour
+const cacheTTL = time.Hour
 
-func (s *SQLite3Store) ReadCache(ctx context.Context, k string, d time.Duration) (string, error) {
+func (s *SQLite3Store) ReadCache(ctx context.Context, k string) (string, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -30,7 +30,7 @@ func (s *SQLite3Store) ReadCache(ctx context.Context, k string, d time.Duration)
 	} else if err != nil {
 		return "", err
 	}
-	if createdAt.Add(d).Before(time.Now()) {
+	if createdAt.Add(cacheTTL).Before(time.Now()) {
 		return "", nil
 	}
 	return value, nil
@@ -46,7 +46,7 @@ func (s *SQLite3Store) WriteCache(ctx context.Context, k, v string) error {
 	}
 	defer common.Rollback(tx)
 
-	threshold := time.Now().Add(-CacheTTL).UTC()
+	threshold := time.Now().Add(-cacheTTL).UTC()
 	_, err = tx.ExecContext(ctx, "DELETE FROM caches WHERE created_at<?", threshold)
 	if err != nil {
 		return err
