@@ -103,7 +103,7 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 		}
 	}
 
-	return node.store.WriteCache(ctx, key, "processed", store.CacheTTL)
+	return node.store.WriteCache(ctx, key, "processed")
 }
 
 func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, rentExemptBalance uint64) error {

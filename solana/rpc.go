@@ -131,7 +131,7 @@ func (node *Node) RPCGetTransaction(ctx context.Context, signature string) (*rpc
 	if err != nil {
 		panic(err)
 	}
-	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b), store.CacheTTL)
+	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b))
 	if err != nil {
 		panic(err)
 	}
@@ -165,7 +165,7 @@ func (node *Node) RPCGetAccount(ctx context.Context, account solana.PublicKey) (
 	if err != nil {
 		panic(err)
 	}
-	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b), store.CacheTTL)
+	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b))
 	if err != nil {
 		panic(err)
 	}
@@ -190,7 +190,7 @@ func (node *Node) RPCGetMultipleAccounts(ctx context.Context, as solana.PublicKe
 		if err != nil {
 			panic(err)
 		}
-		err = node.store.WriteCache(ctx, key, hex.EncodeToString(b), store.CacheTTL)
+		err = node.store.WriteCache(ctx, key, hex.EncodeToString(b))
 		if err != nil {
 			panic(err)
 		}
@@ -225,7 +225,7 @@ func (node *Node) RPCGetAsset(ctx context.Context, account string) (*solanaApp.A
 	if err != nil {
 		panic(err)
 	}
-	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b), store.CacheTTL)
+	err = node.store.WriteCache(ctx, key, hex.EncodeToString(b))
 	if err != nil {
 		panic(err)
 	}
@@ -251,7 +251,7 @@ func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, data
 	if err != nil {
 		return 0, fmt.Errorf("soalan.GetMinimumBalanceForRentExemption(%d) => %v", dataSize, err)
 	}
-	err = node.store.WriteCache(ctx, key, fmt.Sprintf("%d", rentExemptBalance), store.CacheTTL)
+	err = node.store.WriteCache(ctx, key, fmt.Sprintf("%d", rentExemptBalance))
 	if err != nil {
 		panic(err)
 	}
