@@ -119,18 +119,6 @@ func TestCompaction(t *testing.T) {
 	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
 
 	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
-		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
-		require.Nil(err)
-		require.NotNil(call)
-		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
-		require.Nil(err)
-		require.True(handled)
-		require.Equal(mtg.StorageAssetId, ar.Compaction)
-		require.Len(ar.Transactions, 0)
-	}
-
 	for range 3 {
 		for _, node := range nodes {
 			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
@@ -138,6 +126,17 @@ func TestCompaction(t *testing.T) {
 			for _, o := range os {
 				require.Equal("0.01", o.Amount.String())
 			}
+
+			testStep(ctx, require, node, out)
+			call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
+			require.Nil(err)
+			require.NotNil(call)
+			ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
+			require.Nil(err)
+			require.True(handled)
+			require.Equal(mtg.StorageAssetId, ar.Compaction)
+			require.Len(ar.Transactions, 0)
+
 			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
 		}
@@ -183,14 +182,8 @@ func TestDepositCompaction(t *testing.T) {
 	out.OutputId = "329346e1-34c2-4de0-8e35-729518eda8bd"
 	out.DepositHash = sql.NullString{Valid: true, String: "6b33cca6e650a1c2abe4122a466eb7d02f7faa47ee935c80536178bacd913a56"}
 	require.Nil(err)
-	a := &mtg.Action{UnifiedOutput: *out}
-	for _, node := range nodes {
-		a.TestAttachActionToGroup(node.group)
-		txs, compaction := node.processDeposit(ctx, a)
-		require.Len(txs, 0)
-		require.Equal(mtg.StorageAssetId, compaction)
-	}
 
+	a := &mtg.Action{UnifiedOutput: *out}
 	for range 3 {
 		for _, node := range nodes {
 			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
@@ -198,6 +191,12 @@ func TestDepositCompaction(t *testing.T) {
 			for _, o := range os {
 				require.Equal("0.01", o.Amount.String())
 			}
+
+			a.TestAttachActionToGroup(node.group)
+			txs, compaction := node.processDeposit(ctx, a)
+			require.Len(txs, 0)
+			require.Equal(mtg.StorageAssetId, compaction)
+
 			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
 		}
@@ -236,14 +235,6 @@ func TestPostprocessCompaction(t *testing.T) {
 	extra := []byte{FlagConfirmCallSuccess, 1}
 	extra = append(extra, signature[:]...)
 	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
-
-		ar, _, err := node.store.ReadActionResult(ctx, id, id)
-		require.Nil(err)
-		require.Len(ar.Transactions, 0)
-		require.Equal(common.SafeLitecoinChainId, ar.Compaction)
-	}
 
 	for range 2 {
 		for _, node := range nodes {
@@ -252,7 +243,14 @@ func TestPostprocessCompaction(t *testing.T) {
 			for _, o := range os {
 				require.Equal("0.0003", o.Amount.String())
 			}
-			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
+
+			testStep(ctx, require, node, out)
+			ar, _, err := node.store.ReadActionResult(ctx, id, id)
+			require.Nil(err)
+			require.Len(ar.Transactions, 0)
+			require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
 		}
 
