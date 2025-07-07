@@ -82,7 +82,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 
 func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
 	key := fmt.Sprintf("block:%d", checkpoint)
-	val, err := node.store.ReadCache(ctx, key)
+	val, err := node.store.ReadCache(ctx, key, store.CacheTTL)
 	if err != nil || val != "" {
 		return err
 	}
@@ -103,7 +103,7 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 		}
 	}
 
-	return node.store.WriteCache(ctx, key, "processed")
+	return node.store.WriteCache(ctx, key, "processed", store.CacheTTL)
 }
 
 func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, rentExemptBalance uint64) error {
