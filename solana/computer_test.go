@@ -119,7 +119,7 @@ func TestCompaction(t *testing.T) {
 	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
 
 	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
-	for range 3 {
+	for i := range 3 {
 		for _, node := range nodes {
 			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
 			require.Len(os, mtg.OutputsBatchSize)
@@ -127,6 +127,15 @@ func TestCompaction(t *testing.T) {
 				require.Equal("0.01", o.Amount.String())
 			}
 
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+
+		out.Sequence = sequence
+		for _, node := range nodes {
 			testStep(ctx, require, node, out)
 			call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
 			require.Nil(err)
@@ -134,28 +143,14 @@ func TestCompaction(t *testing.T) {
 			ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
 			require.Nil(err)
 			require.True(handled)
-			require.Equal(mtg.StorageAssetId, ar.Compaction)
-			require.Len(ar.Transactions, 0)
-
-			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
-			require.Nil(err)
+			if i == 2 {
+				require.Equal("", ar.Compaction)
+				require.Len(ar.Transactions, 1)
+			} else {
+				require.Equal(mtg.StorageAssetId, ar.Compaction)
+				require.Len(ar.Transactions, 0)
+			}
 		}
-
-		sequence += 100
-		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
-	}
-
-	out.Sequence += sequence + 1000
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
-		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
-		require.Nil(err)
-		require.NotNil(call)
-		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
-		require.Nil(err)
-		require.True(handled)
-		require.Equal("", ar.Compaction)
-		require.Len(ar.Transactions, 1)
 	}
 }
 
@@ -184,7 +179,7 @@ func TestDepositCompaction(t *testing.T) {
 	require.Nil(err)
 
 	a := &mtg.Action{UnifiedOutput: *out}
-	for range 3 {
+	for i := range 3 {
 		for _, node := range nodes {
 			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
 			require.Len(os, mtg.OutputsBatchSize)
@@ -192,25 +187,25 @@ func TestDepositCompaction(t *testing.T) {
 				require.Equal("0.01", o.Amount.String())
 			}
 
-			a.TestAttachActionToGroup(node.group)
-			txs, compaction := node.processDeposit(ctx, a)
-			require.Len(txs, 0)
-			require.Equal(mtg.StorageAssetId, compaction)
-
 			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
 		}
 
 		sequence += 100
 		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
-	}
 
-	a.Sequence += sequence + 1000
-	for _, node := range nodes {
-		a.TestAttachActionToGroup(node.group)
-		txs, compaction := node.processDeposit(ctx, a)
-		require.Len(txs, 1)
-		require.Equal("", compaction)
+		out.Sequence = sequence
+		for _, node := range nodes {
+			a.TestAttachActionToGroup(node.group)
+			txs, compaction := node.processDeposit(ctx, a)
+			if i == 2 {
+				require.Len(txs, 1)
+				require.Equal("", compaction)
+			} else {
+				require.Len(txs, 0)
+				require.Equal(mtg.StorageAssetId, compaction)
+			}
+		}
 	}
 }
 
@@ -236,7 +231,7 @@ func TestPostprocessCompaction(t *testing.T) {
 	extra = append(extra, signature[:]...)
 	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 
-	for range 2 {
+	for i := range 2 {
 		for _, node := range nodes {
 			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, common.SafeLitecoinChainId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
 			require.Len(os, mtg.OutputsBatchSize)
@@ -244,27 +239,27 @@ func TestPostprocessCompaction(t *testing.T) {
 				require.Equal("0.0003", o.Amount.String())
 			}
 
-			testStep(ctx, require, node, out)
-			ar, _, err := node.store.ReadActionResult(ctx, id, id)
-			require.Nil(err)
-			require.Len(ar.Transactions, 0)
-			require.Equal(common.SafeLitecoinChainId, ar.Compaction)
-
-			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
 			require.Nil(err)
 		}
 
 		sequence += 100
 		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0108"))
-	}
-	out.Sequence = sequence + 100
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
 
-		ar, _, err := node.store.ReadActionResult(ctx, id, id)
-		require.Nil(err)
-		require.Len(ar.Transactions, 1)
-		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+		out.Sequence = sequence
+		for _, node := range nodes {
+			testStep(ctx, require, node, out)
+
+			ar, _, err := node.store.ReadActionResult(ctx, id, id)
+			require.Nil(err)
+			if i == 1 {
+				require.Len(ar.Transactions, 1)
+				require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+			} else {
+				require.Len(ar.Transactions, 0)
+				require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+			}
+		}
 	}
 }
 
