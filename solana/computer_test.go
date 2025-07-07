@@ -2,6 +2,7 @@ package solana
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -118,34 +119,147 @@ func TestCompaction(t *testing.T) {
 	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
 
 	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
-		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
-		require.Nil(err)
-		require.NotNil(call)
-		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
-		require.Nil(err)
-		require.True(handled)
-		require.Equal(mtg.StorageAssetId, ar.Compaction)
-		require.Len(ar.Transactions, 0)
-	}
+	for i := range 3 {
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.01", o.Amount.String())
+			}
 
-	seq := 0
-	for range 3 {
-		seq += 10000
-		fmt.Println("testWriteOutputForNodes", node.conf.AppId)
-		testWriteOutputForNodes(ctx, mds, node.conf.AppId, mtg.StorageAssetId, "", "", uint64(seq), decimal.RequireFromString("0.36"))
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+
+		out.Sequence = sequence
+		for _, node := range nodes {
+			testStep(ctx, require, node, out)
+			call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
+			require.Nil(err)
+			require.NotNil(call)
+			ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
+			require.Nil(err)
+			require.True(handled)
+			if i == 2 {
+				require.Equal("", ar.Compaction)
+				require.Len(ar.Transactions, 1)
+			} else {
+				require.Equal(mtg.StorageAssetId, ar.Compaction)
+				require.Len(ar.Transactions, 0)
+			}
+		}
 	}
-	for _, node := range nodes {
-		testStep(ctx, require, node, out)
-		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateFailed)
-		require.Nil(err)
-		require.NotNil(call)
-		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, id)
-		require.Nil(err)
-		require.True(handled)
-		require.Equal("", ar.Compaction)
-		require.Len(ar.Transactions, 1)
+}
+
+func TestDepositCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	user := testUserRequestAddUsers(ctx, require, nodes)
+
+	node := nodes[0]
+	conf := node.conf
+	nonce, err := node.store.ReadNonceAccount(ctx, "DaJw3pa9rxr25AT1HnQnmPvwS4JbnwNvQbNLm8PJRhqV")
+	require.Nil(err)
+	require.False(nonce.Mix.Valid)
+	require.False(nonce.CallId.Valid)
+	err = node.store.LockNonceAccountWithMix(ctx, nonce.Address, user.MixAddress)
+	require.Nil(err)
+
+	sequence += 10
+	out, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", sequence, decimal.RequireFromString("0.90432841"))
+	out.OutputId = "329346e1-34c2-4de0-8e35-729518eda8bd"
+	out.DepositHash = sql.NullString{Valid: true, String: "6b33cca6e650a1c2abe4122a466eb7d02f7faa47ee935c80536178bacd913a56"}
+	require.Nil(err)
+
+	a := &mtg.Action{UnifiedOutput: *out}
+	for i := range 3 {
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.01", o.Amount.String())
+			}
+
+			err = node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+
+		out.Sequence = sequence
+		for _, node := range nodes {
+			a.TestAttachActionToGroup(node.group)
+			txs, compaction := node.processDeposit(ctx, a)
+			if i == 2 {
+				require.Len(txs, 1)
+				require.Equal("", compaction)
+			} else {
+				require.Len(txs, 0)
+				require.Equal(mtg.StorageAssetId, compaction)
+			}
+		}
+	}
+}
+
+func TestPostprocessCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	testObserverUpdateNetworInfo(ctx, require, nodes)
+	testObserverDeployAsset(ctx, require, nodes)
+
+	user := testUserRequestAddUsers(ctx, require, nodes)
+	call := testUserRequestSystemCall(ctx, require, nodes, mds, user)
+	testConfirmWithdrawal(ctx, require, nodes, call)
+	testObserverConfirmMainCall(ctx, require, nodes, call)
+
+	node := nodes[0]
+	id := "329346e1-34c2-4de0-8e35-729518eda8bd"
+	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
+	extra := []byte{FlagConfirmCallSuccess, 1}
+	extra = append(extra, signature[:]...)
+	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
+
+	for i := range 2 {
+		for _, node := range nodes {
+			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, common.SafeLitecoinChainId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			require.Len(os, mtg.OutputsBatchSize)
+			for _, o := range os {
+				require.Equal("0.0003", o.Amount.String())
+			}
+
+			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
+
+		sequence += 100
+		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0108"))
+
+		out.Sequence = sequence
+		for _, node := range nodes {
+			testStep(ctx, require, node, out)
+
+			ar, _, err := node.store.ReadActionResult(ctx, id, id)
+			require.Nil(err)
+			if i == 1 {
+				require.Len(ar.Transactions, 1)
+				require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+			} else {
+				require.Len(ar.Transactions, 0)
+				require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+			}
+		}
 	}
 }
 
@@ -797,7 +911,7 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}
-	for i := range 100 {
+	for i := range 110 {
 		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.01"))
 		require.Nil(err)
 		sequence += uint64(i + 1)
@@ -807,13 +921,20 @@ func testInitOutputs(ctx context.Context, require *require.Assertions, nodes []*
 		require.Nil(err)
 		sequence += uint64(i + 1)
 	}
+	for i := range 72 {
+		_, err := testWriteOutputForNodes(ctx, mds, conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0003"))
+		require.Nil(err)
+		sequence += uint64(i + 1)
+	}
 	for _, node := range nodes {
 		os := node.group.ListOutputsForAsset(ctx, conf.AppId, conf.AssetId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
 		os = node.group.ListOutputsForAsset(ctx, conf.AppId, mtg.StorageAssetId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
-		require.Len(os, 100)
+		require.Len(os, 110)
 		os = node.group.ListOutputsForAsset(ctx, conf.AppId, common.SafeSolanaChainId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
 		require.Len(os, 100)
+		os = node.group.ListOutputsForAsset(ctx, conf.AppId, common.SafeLitecoinChainId, start, sequence, mtg.SafeUtxoStateUnspent, 500)
+		require.Len(os, 72)
 	}
 }
 
