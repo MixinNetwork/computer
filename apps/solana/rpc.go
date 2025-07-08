@@ -64,7 +64,9 @@ func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.G
 			MaxSupportedTransactionVersion: &rpc.MaxSupportedTransactionVersion1,
 			TransactionDetails:             rpc.TransactionDetailsFull,
 		})
-		if mtg.CheckRetryableError(err) || errors.Is(err, rpc.ErrNotFound) {
+		if mtg.CheckRetryableError(err) ||
+			errors.Is(err, rpc.ErrNotFound) ||
+			strings.Contains(err.Error(), "Block not available for slot") {
 			time.Sleep(1 * time.Second)
 			continue
 		}
