@@ -7,23 +7,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
 )
 
 type ExternalAsset struct {
 	AssetId      string
+	ChainId      string
+	Name         string
+	Symbol       string
+	PriceUSD     string
 	Uri          sql.NullString
 	IconUrl      sql.NullString
 	CreatedAt    time.Time
 	DeployedHash sql.NullString
 }
 
-var externalAssetCols = []string{"asset_id", "uri", "icon_url", "deployed_hash", "created_at"}
+var externalAssetCols = []string{"asset_id", "chain_id", "name", "symbol", "price_usd", "uri", "icon_url", "deployed_hash", "created_at"}
 
 func externalAssetFromRow(row Row) (*ExternalAsset, error) {
 	var a ExternalAsset
-	err := row.Scan(&a.AssetId, &a.Uri, &a.IconUrl, &a.DeployedHash, &a.CreatedAt)
+	err := row.Scan(&a.AssetId, &a.ChainId, &a.Name, &a.Symbol, &a.PriceUSD, &a.Uri, &a.IconUrl, &a.DeployedHash, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -41,7 +46,7 @@ func (s *SQLite3Store) WriteExternalAssets(ctx context.Context, assets []*Extern
 	defer common.Rollback(tx)
 
 	for _, asset := range assets {
-		vals := []any{asset.AssetId, nil, nil, nil, asset.CreatedAt}
+		vals := []any{asset.AssetId, asset.ChainId, asset.Name, asset.Symbol, asset.PriceUSD, nil, nil, nil, asset.CreatedAt}
 		err = s.execOne(ctx, tx, buildInsertionSQL("external_assets", externalAssetCols), vals...)
 		if err != nil {
 			return fmt.Errorf("INSERT external_assets %v", err)
@@ -110,6 +115,27 @@ func (s *SQLite3Store) MarkExternalAssetDeployed(ctx context.Context, assets []*
 	return tx.Commit()
 }
 
+func (s *SQLite3Store) UpdateExternalAssetsInfo(ctx context.Context, assets []*bot.Asset) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	for _, a := range assets {
+		query := "UPDATE external_assets SET chain_id=?, name=?, symbol=?, price_usd=? WHERE asset_id=?"
+		err = s.execOne(ctx, tx, query, a.ChainID, a.DisplayName, a.DisplaySymbol, a.PriceUSD, a.AssetID)
+		if err != nil {
+			return fmt.Errorf("SQLite3Store UPDATE external_assets %v", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *SQLite3Store) ReadExternalAsset(ctx context.Context, id string) (*ExternalAsset, error) {
 	query := fmt.Sprintf("SELECT %s FROM external_assets WHERE asset_id=?", strings.Join(externalAssetCols, ","))
 	row := s.db.QueryRowContext(ctx, query, id)
@@ -137,6 +163,28 @@ func (s *SQLite3Store) ListUndeployedAssets(ctx context.Context) ([]*ExternalAss
 		as = append(as, asset)
 	}
 	return as, nil
+}
+
+func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	query := fmt.Sprintf("SELECT %s FROM external_assets LIMIT 500", strings.Join(externalAssetCols, ","))
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		asset, err := externalAssetFromRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, asset.AssetId)
+	}
+	return ids, nil
 }
 
 func (s *SQLite3Store) ListAssetIconUrls(ctx context.Context) (map[string]string, error) {

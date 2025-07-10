@@ -117,6 +117,10 @@ CREATE INDEX IF NOT EXISTS users_by_created ON users(created_at);
 
 CREATE TABLE IF NOT EXISTS external_assets (
   asset_id        VARCHAR NOT NULL,
+  chain_id        VARCHAR NOT NULL,
+  name            VARCHAR NOT NULL,
+  symbol          VARCHAR NOT NULL,
+  price_usd       VARCHAR NOT NULL,
   uri             TEXT,
   icon_url        TEXT,
   deployed_hash   VARCHAR,

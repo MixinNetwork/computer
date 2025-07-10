@@ -628,6 +628,10 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 	err := node.store.WriteExternalAssets(ctx, []*store.ExternalAsset{
 		{
 			AssetId:   common.SafeLitecoinChainId,
+			ChainId:   common.SafeLitecoinChainId,
+			Name:      "Litecoin",
+			Symbol:    "LTC",
+			PriceUSD:  "91.03",
 			CreatedAt: time.Now().UTC(),
 		},
 	})
@@ -637,6 +641,19 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 	as, err := node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)
 	require.Len(as, 1)
+	err = node.store.UpdateExternalAssetsInfo(ctx, []*bot.Asset{
+		{
+			AssetID:       common.SafeLitecoinChainId,
+			ChainID:       common.SafeLitecoinChainId,
+			DisplayName:   "Litecoin",
+			DisplaySymbol: "LTC",
+			PriceUSD:      "90",
+		},
+	})
+	as, err = node.store.ListUndeployedAssets(ctx)
+	require.Nil(err)
+	require.Len(as, 1)
+	require.Equal("90", as[0].PriceUSD)
 
 	var extra []byte
 	extra = append(extra, byte(len(assets)))

@@ -191,6 +191,10 @@ func (node *Node) httpDeployAssets(w http.ResponseWriter, r *http.Request, param
 		}
 		assets = append(assets, &store.ExternalAsset{
 			AssetId:   id,
+			ChainId:   asset.ChainID,
+			Name:      asset.DisplayName,
+			Symbol:    asset.DisplaySymbol,
+			PriceUSD:  asset.PriceUSD,
 			CreatedAt: now,
 		})
 	}
