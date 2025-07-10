@@ -297,7 +297,7 @@ func (node *Node) refreshAssetsLoop(ctx context.Context) {
 			panic(err)
 		}
 
-		time.Sleep(time.Second)
+		time.Sleep(time.Minute)
 	}
 }
 

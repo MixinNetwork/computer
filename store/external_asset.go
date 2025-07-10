@@ -165,6 +165,28 @@ func (s *SQLite3Store) ListUndeployedAssets(ctx context.Context) ([]*ExternalAss
 	return as, nil
 }
 
+func (s *SQLite3Store) DeployedExternalAssetMap(ctx context.Context) (map[string]*ExternalAsset, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	query := fmt.Sprintf("SELECT %s FROM external_assets WHERE icon_url IS NOT NULL AND deployed_hash IS NOT NULL LIMIT 500", strings.Join(externalAssetCols, ","))
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	am := make(map[string]*ExternalAsset)
+	for rows.Next() {
+		asset, err := externalAssetFromRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		am[asset.AssetId] = asset
+	}
+	return am, nil
+}
+
 func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
@@ -185,26 +207,4 @@ func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, erro
 		ids = append(ids, asset.AssetId)
 	}
 	return ids, nil
-}
-
-func (s *SQLite3Store) ListAssetIconUrls(ctx context.Context) (map[string]string, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	query := fmt.Sprintf("SELECT %s FROM external_assets WHERE icon_url IS NOT NULL AND deployed_hash IS NOT NULL LIMIT 500", strings.Join(externalAssetCols, ","))
-	rows, err := s.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	um := make(map[string]string)
-	for rows.Next() {
-		asset, err := externalAssetFromRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		um[asset.AssetId] = asset.IconUrl.String
-	}
-	return um, nil
 }
