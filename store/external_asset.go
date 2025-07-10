@@ -166,8 +166,8 @@ func (s *SQLite3Store) ListUndeployedAssets(ctx context.Context) ([]*ExternalAss
 }
 
 func (s *SQLite3Store) DeployedExternalAssetMap(ctx context.Context) (map[string]*ExternalAsset, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	query := fmt.Sprintf("SELECT %s FROM external_assets WHERE icon_url IS NOT NULL AND deployed_hash IS NOT NULL LIMIT 500", strings.Join(externalAssetCols, ","))
 	rows, err := s.db.QueryContext(ctx, query)
@@ -191,8 +191,7 @@ func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, erro
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	query := fmt.Sprintf("SELECT %s FROM external_assets LIMIT 500", strings.Join(externalAssetCols, ","))
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM external_assets LIMIT 500")
 	if err != nil {
 		return nil, err
 	}
@@ -200,11 +199,12 @@ func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, erro
 
 	var ids []string
 	for rows.Next() {
-		asset, err := externalAssetFromRow(rows)
+		var id string
+		err := rows.Scan(&id)
 		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, asset.AssetId)
+		ids = append(ids, id)
 	}
 	return ids, nil
 }
