@@ -191,7 +191,7 @@ func (s *SQLite3Store) ListExternalAssetIds(ctx context.Context) ([]string, erro
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM external_assets LIMIT 500")
+	rows, err := s.db.QueryContext(ctx, "SELECT asset_id FROM external_assets LIMIT 500")
 	if err != nil {
 		return nil, err
 	}
