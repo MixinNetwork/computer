@@ -30,10 +30,15 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	if string(node.id) != node.conf.ObserverId {
 		return
 	}
+	err := node.store.Migrate(ctx)
+	if err != nil {
+		panic(err)
+	}
+
 	logger.Printf("bootObserver(%s)", node.id)
 	go node.StartHTTP(version)
 
-	err := node.sendPriceInfo(ctx)
+	err = node.sendPriceInfo(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -62,6 +67,8 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	go node.signedCallLoop(ctx)
 
 	go node.solanaRPCBlocksLoop(ctx)
+
+	go node.refreshAssetsLoop(ctx)
 }
 
 func (node *Node) initMPCKeys(ctx context.Context) error {
@@ -280,6 +287,17 @@ func (node *Node) signedCallLoop(ctx context.Context) {
 		}
 
 		time.Sleep(loopInterval)
+	}
+}
+
+func (node *Node) refreshAssetsLoop(ctx context.Context) {
+	for {
+		err := node.refreshAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+
+		time.Sleep(time.Minute)
 	}
 }
 
@@ -894,4 +912,16 @@ func (node *Node) OccupyNonceAccountByCall(ctx context.Context, nonce *store.Non
 		panic(fmt.Errorf("inconsistent call id: %s %s", nonce.CallId.String, cid))
 	}
 	return node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+}
+
+func (node *Node) refreshAssets(ctx context.Context) error {
+	ids, err := node.store.ListExternalAssetIds(ctx)
+	if err != nil {
+		return err
+	}
+	as, err := common.SafeReadAssetsUntilSufficient(ctx, ids, node.SafeUser())
+	if err != nil {
+		return err
+	}
+	return node.store.UpdateExternalAssetsInfo(ctx, as)
 }

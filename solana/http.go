@@ -140,7 +140,7 @@ func (node *Node) httpGetAssets(w http.ResponseWriter, r *http.Request, params m
 		common.RenderError(w, r, err)
 		return
 	}
-	um, err := node.store.ListAssetIconUrls(ctx)
+	am, err := node.store.DeployedExternalAssetMap(ctx)
 	if err != nil {
 		common.RenderError(w, r, err)
 		return
@@ -148,11 +148,16 @@ func (node *Node) httpGetAssets(w http.ResponseWriter, r *http.Request, params m
 
 	view := make([]map[string]any, 0)
 	for _, asset := range as {
+		a := am[asset.AssetId]
 		view = append(view, map[string]any{
-			"asset_id": asset.AssetId,
-			"address":  asset.Address,
-			"decimals": asset.Decimals,
-			"uri":      um[asset.AssetId],
+			"asset_id":  asset.AssetId,
+			"chain_id":  a.ChainId,
+			"name":      a.Name,
+			"symbol":    a.Symbol,
+			"address":   asset.Address,
+			"decimals":  asset.Decimals,
+			"uri":       a.IconUrl.String,
+			"price_usd": a.PriceUSD,
 		})
 	}
 	common.RenderJSON(w, r, http.StatusOK, view)
@@ -191,6 +196,10 @@ func (node *Node) httpDeployAssets(w http.ResponseWriter, r *http.Request, param
 		}
 		assets = append(assets, &store.ExternalAsset{
 			AssetId:   id,
+			ChainId:   asset.ChainID,
+			Name:      asset.DisplayName,
+			Symbol:    asset.DisplaySymbol,
+			PriceUSD:  asset.PriceUSD,
 			CreatedAt: now,
 		})
 	}
