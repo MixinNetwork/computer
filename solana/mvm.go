@@ -485,14 +485,8 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		}
 
 		switch call.Type {
-		case store.CallTypeDeposit:
-			err := node.store.ConfirmSystemCallsWithRequest(ctx, req, []*store.SystemCall{call}, nil, nil, nil)
-			if err != nil {
-				panic(err)
-			}
-			return nil, ""
-		case store.CallTypePostProcess:
-			return node.confirmPostProcessSystemCall(ctx, req, call, tx)
+		case store.CallTypeDeposit, store.CallTypePostProcess:
+			return node.confirmBurnRelatedSystemCall(ctx, req, call, tx)
 		case store.CallTypePrepare:
 			calls = append(calls, call)
 			if n == 2 {
@@ -657,7 +651,7 @@ func (node *Node) processObserverRequestSign(ctx context.Context, req *store.Req
 	return nil, ""
 }
 
-// create system call to transfer assets to mtg deposit entry from user account on Solana
+// create system call to transfer assets to mtg deposit entry or burn assets from user account on Solana
 func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *store.Request) ([]*mtg.Transaction, string) {
 	logger.Printf("node.processObserverCreateDepositCall(%s)", string(node.id))
 	if req.Role != RequestRoleObserver {
@@ -669,7 +663,7 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 
 	extra := req.ExtraBytes()
 	userAddress := solana.PublicKeyFromBytes(extra[:32])
-	signature := solana.SignatureFromBytes(extra[32:])
+	signature := solana.SignatureFromBytes(extra[32:96])
 
 	user, err := node.store.ReadUserByChainAddress(ctx, userAddress.String())
 	logger.Printf("store.ReadUserByChainAddress(%s) => %v %v", userAddress.String(), user, err)
@@ -809,7 +803,8 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		}
 		id := common.UniqueId(out.DepositHash.String, fmt.Sprintf("deposit-%d", i))
 		id = common.UniqueId(id, t.Receiver)
-		tx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte("deposit"), id)
+		hash := out.DepositHash.String
+		tx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte(hash), id)
 		if tx == nil {
 			return nil, t.AssetId
 		}
@@ -879,7 +874,7 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	return call, tx, nil
 }
 
-func (node *Node) confirmPostProcessSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, tx *solana.Transaction) ([]*mtg.Transaction, string) {
+func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, tx *solana.Transaction) ([]*mtg.Transaction, string) {
 	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
@@ -909,14 +904,23 @@ func (node *Node) confirmPostProcessSystemCall(ctx context.Context, req *store.R
 
 		id := common.UniqueId(call.RequestId, fmt.Sprintf("BURN:%s", da.AssetId))
 		id = common.UniqueId(id, user.MixAddress)
-		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, da.AssetId, mix.Members(), int(mix.Threshold), amt.String(), nil, id)
+		memo := []byte(call.RequestId)
+		if call.Type == store.CallTypeDeposit {
+			req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
+			if err != nil {
+				panic(err)
+			}
+			sig := solana.SignatureFromBytes(req.ExtraBytes()[32:96]).String()
+			memo = []byte(sig)
+		}
+		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, da.AssetId, mix.Members(), int(mix.Threshold), amt.String(), memo, id)
 		if tx == nil {
 			return node.failRequest(ctx, req, da.AssetId)
 		}
 		txs = append(txs, tx)
 	}
 
-	err = node.store.ConfirmPostProcessSystemCallWithRequest(ctx, req, call, txs)
+	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, txs)
 	if err != nil {
 		panic(err)
 	}
