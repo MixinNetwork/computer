@@ -176,6 +176,7 @@ func (c *Client) RPCGetMultipleAccounts(ctx context.Context, accounts solana.Pub
 }
 
 func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.GetTransactionResult, error) {
+	retry := 5
 	for {
 		r, err := c.rpcClient.GetTransaction(ctx,
 			solana.MustSignatureFromBase58(signature),
@@ -189,10 +190,15 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		if err != nil || r.Meta == nil {
-			if strings.Contains(err.Error(), "not found") {
+		if err != nil && strings.Contains(err.Error(), "not found") {
+			if retry == 0 {
 				return nil, nil
 			}
+			retry -= 1
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if err != nil || r.Meta == nil {
 			return nil, fmt.Errorf("solana.GetTransaction(%s) => %v", signature, err)
 		}
 
