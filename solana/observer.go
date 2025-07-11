@@ -30,15 +30,10 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	if string(node.id) != node.conf.ObserverId {
 		return
 	}
-	err := node.store.Migrate(ctx)
-	if err != nil {
-		panic(err)
-	}
-
 	logger.Printf("bootObserver(%s)", node.id)
 	go node.StartHTTP(version)
 
-	err = node.sendPriceInfo(ctx)
+	err := node.sendPriceInfo(ctx)
 	if err != nil {
 		panic(err)
 	}
