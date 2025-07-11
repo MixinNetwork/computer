@@ -262,10 +262,13 @@ func (s *SQLite3Store) ConfirmSystemCallsWithRequest(ctx context.Context, req *R
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ConfirmPostProcessSystemCallWithRequest(ctx context.Context, req *Request, call *SystemCall, txs []*mtg.Transaction) error {
-	if call.Type != CallTypePostProcess {
+func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Context, req *Request, call *SystemCall, txs []*mtg.Transaction) error {
+	switch call.Type {
+	case CallTypePostProcess, CallTypeDeposit:
+	default:
 		panic(call.Type)
 	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
