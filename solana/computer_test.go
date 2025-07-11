@@ -317,7 +317,7 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 	id := uuid.Must(uuid.NewV4()).String()
 	signatures := []solana.Signature{
 		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
-		solana.MustSignatureFromBase58("39XBTQ7v6874uQb3vpF4zLe2asgNXjoBgQDkNiWya9ZW7UuG6DgY7kP4DFTRaGUo48NZF4qiZFGs1BuWJyCzRLtW"),
+		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
 	}
 	extra := []byte{FlagConfirmCallSuccess}
 	extra = append(extra, byte(len(signatures)))

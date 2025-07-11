@@ -190,6 +190,9 @@ func getTestSystemConfirmCallMessage(signature string) string {
 	if signature == "2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb" {
 		return "4d57022c484aebdb7d4472c16740f7e8c4f9047b41cbcf05a9d517558bc276c7"
 	}
+	if signature == "42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r" {
+		return "03bd9b9ebe4a619f52eb0fcb81c647eb81ee18b8728ffa6a6cc7b6a04f03540d"
+	}
 	if signature == "5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR" {
 		return "bf1648ad15341bc4225e08e1c6842df68bf80f309764ec32327deab8e2743167"
 	}
