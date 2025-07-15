@@ -759,12 +759,6 @@ func (node *Node) parseSolanaBlockBalanceChanges(ctx context.Context, transfers 
 		} else if user == nil {
 			continue
 		}
-		token, err := node.store.ReadDeployedAssetByAddress(ctx, t.TokenAddress)
-		if err != nil {
-			return nil, err
-		} else if token != nil {
-			continue
-		}
 
 		key := fmt.Sprintf("%s:%s", t.Receiver, t.TokenAddress)
 		total := changes[key]
