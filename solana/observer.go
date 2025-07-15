@@ -649,21 +649,32 @@ func (node *Node) handleSignedCalls(ctx context.Context) error {
 			key := fmt.Sprintf("%s:%s", call.Type, call.RequestId)
 			callSequence[key] = append(callSequence[key], call)
 		case store.CallTypeMain:
-			pending, err := node.store.CheckUnfinishedSubCalls(ctx, call)
-			if err != nil {
-				panic(err)
-			}
+			// should wait withdrawals getting confirmed
 			unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, call)
 			if err != nil {
 				panic(err)
 			}
-			// should be processed with its prepare call together or wait withdrawals getting confirmed
-			if pending || unconfirmed {
+			if unconfirmed {
+				continue
+			}
+			// should be processed with its prepare call together unless prepare call not exists
+			pending, err := node.store.CheckUnfinishedSubCalls(ctx, call)
+			if err != nil {
+				panic(err)
+			}
+			if pending {
+				continue
+			}
+			// should be processed after previous main calls being confirmed
+			previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, call)
+			if err != nil {
+				panic(err)
+			}
+			if previous {
 				continue
 			}
 
 			key := fmt.Sprintf("%s:%s", store.CallTypeMain, call.UserIdFromPublicPath())
-			// should be processed after previous main call being confirmed
 			if len(callSequence[key]) > 0 {
 				continue
 			}
@@ -673,16 +684,24 @@ func (node *Node) handleSignedCalls(ctx context.Context) error {
 			if main == nil {
 				continue
 			}
+			// should wait withdrawals of its main call getting confirmed
 			unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, main)
 			if err != nil {
 				panic(err)
 			}
-			// should wait withdrawals of its main call getting confirmed
 			if unconfirmed {
 				continue
 			}
+			// should be processed after previous main calls being confirmed
+			previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, call)
+			if err != nil {
+				panic(err)
+			}
+			if previous {
+				continue
+			}
+
 			key := fmt.Sprintf("%s:%s", store.CallTypeMain, main.UserIdFromPublicPath())
-			// should be processed after previous main call being confirmed
 			if len(callSequence[key]) > 0 {
 				continue
 			}

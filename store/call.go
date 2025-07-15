@@ -522,6 +522,20 @@ func (s *SQLite3Store) CheckUnfinishedSubCalls(ctx context.Context, call *System
 	return s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE call_type=? AND state=? AND superior_id=?", CallTypePrepare, common.RequestStatePending, call.RequestId)
 }
 
+func (s *SQLite3Store) CheckUnfinishedPreviousMainCalls(ctx context.Context, call *SystemCall) (bool, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer common.Rollback(tx)
+
+	return s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE call_type=? AND public=? AND created_at<? AND (state=? OR state=?)",
+		CallTypeMain, call.Public, call.CreatedAt, common.RequestStateInitial, common.RequestStatePending)
+}
+
 func (s *SQLite3Store) writeSystemCall(ctx context.Context, tx *sql.Tx, call *SystemCall) error {
 	vals := []any{call.RequestId, call.Superior, call.RequestHash, call.Type, call.NonceAccount, call.Public, call.SkipPostProcess, call.MessageHash, call.Raw, call.State, call.WithdrawalTraces, call.Signature, call.RequestSignerAt, call.Hash, call.CreatedAt, call.UpdatedAt}
 	err := s.execOne(ctx, tx, buildInsertionSQL("system_calls", systemCallCols), vals...)
