@@ -442,6 +442,18 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		if amount.Cmp(dust) < 0 {
 			continue
 		}
+
+		if address != solanaApp.SolanaEmptyAddress {
+			mint, err := node.RPCGetMint(ctx, address)
+			if err != nil {
+				panic(fmt.Errorf("node.RPCGetMint(%s) => %v", address, err))
+			}
+			// skip nft
+			if mint.Supply == 1 && mint.Decimals == 0 {
+				continue
+			}
+		}
+
 		old := assets[address]
 		if old == nil {
 			return fmt.Errorf("invalid missed user balance change: %s", address)
@@ -500,8 +512,19 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	}
 	for key, expected := range expectedChanges {
 		address := strings.Split(key, ":")[1]
-		if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
-			continue
+		if address == solanaApp.SolanaEmptyAddress {
+			if expected.Uint64() < 10 {
+				continue
+			}
+		} else {
+			mint, err := node.RPCGetMint(ctx, address)
+			if err != nil {
+				panic(fmt.Errorf("node.RPCGetMint(%s) => %v", address, err))
+			}
+			// skip nft
+			if mint.Supply == 1 && mint.Decimals == 0 {
+				continue
+			}
 		}
 		actual := actualChanges[key]
 		if actual == nil {

@@ -196,7 +196,7 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 	return nil
 }
 
-func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, ts []*solanaApp.TokenTransfer) error {
+func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, transfers []*solanaApp.TokenTransfer) error {
 	id := common.UniqueId(depositHash.String(), user)
 	cid := common.UniqueId(id, "deposit")
 	extra := solana.MustPublicKeyFromBase58(user).Bytes()
@@ -206,6 +206,10 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 	if err != nil {
 		return err
+	}
+	ts, err := node.checkTransfers(ctx, transfers)
+	if err != nil {
+		panic(err)
 	}
 	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
 	if err != nil {
@@ -460,12 +464,11 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 				continue
 			}
 		}
-		mint := solana.MustPublicKeyFromBase58(asset.Address)
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
 			AssetId:     asset.AssetId,
 			ChainId:     asset.ChainId,
-			Mint:        mint,
+			Mint:        solana.MustPublicKeyFromBase58(asset.Address),
 			Destination: solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry),
 			Amount:      amount.BigInt().Uint64(),
 			Decimals:    uint8(asset.Decimal),
@@ -480,8 +483,12 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	if err != nil {
 		panic(err)
 	}
+	ts, err := node.checkTransfers(ctx, transfers)
+	if err != nil {
+		panic(err)
+	}
 
-	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), ts)
 	if err != nil {
 		panic(err)
 	}
@@ -814,4 +821,21 @@ func (node *Node) sortSolanaTransfers(transfers []*solanaApp.TokenTransfer) {
 		}
 		return transfers[i].Amount > transfers[j].Amount
 	})
+}
+
+func (node *Node) checkTransfers(ctx context.Context, transfers []*solanaApp.TokenTransfer) ([]*solanaApp.TokenTransfer, error) {
+	var ts []*solanaApp.TokenTransfer
+	for _, t := range transfers {
+		mint, err := node.RPCGetMint(ctx, t.Mint.String())
+		if err != nil {
+			logger.Printf("solana.RPCGetMint(%s) => %v", t.Mint.String(), err)
+			return nil, err
+		}
+		// skip nft
+		if mint.Supply == 1 && mint.Decimals == 0 {
+			continue
+		}
+		ts = append(ts, t)
+	}
+	return ts, nil
 }

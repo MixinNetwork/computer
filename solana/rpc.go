@@ -13,7 +13,9 @@ import (
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
+	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
@@ -230,6 +232,19 @@ func (node *Node) RPCGetAsset(ctx context.Context, account string) (*solanaApp.A
 		panic(err)
 	}
 	return asset, nil
+}
+
+func (node *Node) RPCGetMint(ctx context.Context, account string) (*token.Mint, error) {
+	acc, err := node.RPCGetAccount(ctx, solana.MPK(account))
+	if err != nil {
+		return nil, err
+	}
+	var token token.Mint
+	err = bin.NewBinDecoder(acc.Value.Data.GetBinary()).Decode(&token)
+	if err != nil {
+		return nil, fmt.Errorf("solana.NewBinDecoder() => %v", err)
+	}
+	return &token, nil
 }
 
 func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataSize uint64) (uint64, error) {
