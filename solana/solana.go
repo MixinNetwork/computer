@@ -826,16 +826,12 @@ func (node *Node) sortSolanaTransfers(transfers []*solanaApp.TokenTransfer) {
 func (node *Node) checkTransfers(ctx context.Context, transfers []*solanaApp.TokenTransfer) ([]*solanaApp.TokenTransfer, error) {
 	var ts []*solanaApp.TokenTransfer
 	for _, t := range transfers {
-		if t.Mint.String() != solanaApp.SolanaEmptyAddress {
-			mint, err := node.RPCGetMint(ctx, t.Mint.String())
-			if err != nil {
-				logger.Printf("solana.RPCGetMint(%s) => %v", t.Mint.String(), err)
-				return nil, err
-			}
-			// skip nft
-			if mint.Supply == 1 && mint.Decimals == 0 {
-				continue
-			}
+		isNFT, err := node.RPCCheckNFT(ctx, t.Mint.String())
+		if err != nil {
+			logger.Printf("solana.RPCCheckNFT(%s) => %v", t.Mint.String(), err)
+			return nil, err
+		} else if isNFT {
+			continue
 		}
 		ts = append(ts, t)
 	}

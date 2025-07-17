@@ -234,17 +234,20 @@ func (node *Node) RPCGetAsset(ctx context.Context, account string) (*solanaApp.A
 	return asset, nil
 }
 
-func (node *Node) RPCGetMint(ctx context.Context, account string) (*token.Mint, error) {
+func (node *Node) RPCCheckNFT(ctx context.Context, account string) (bool, error) {
+	if account == solanaApp.SolanaEmptyAddress {
+		return false, nil
+	}
 	acc, err := node.RPCGetAccount(ctx, solana.MPK(account))
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	var token token.Mint
-	err = bin.NewBinDecoder(acc.Value.Data.GetBinary()).Decode(&token)
+	var tm token.Mint
+	err = bin.NewBinDecoder(acc.Value.Data.GetBinary()).Decode(&tm)
 	if err != nil {
-		return nil, fmt.Errorf("solana.NewBinDecoder() => %v", err)
+		return false, fmt.Errorf("solana.NewBinDecoder() => %v", err)
 	}
-	return &token, nil
+	return tm.Supply == 1 && tm.Decimals == 0, nil
 }
 
 func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataSize uint64) (uint64, error) {
