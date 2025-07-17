@@ -196,20 +196,24 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 	return nil
 }
 
-func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, transfers []*solanaApp.TokenTransfer) error {
+func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, ts []*solanaApp.TokenTransfer) error {
 	id := common.UniqueId(depositHash.String(), user)
 	cid := common.UniqueId(id, "deposit")
 	extra := solana.MustPublicKeyFromBase58(user).Bytes()
 	extra = append(extra, depositHash[:]...)
 
-	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-	err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
-	if err != nil {
-		return err
-	}
-	ts, err := node.checkTransfers(ctx, transfers)
+	ts, err := node.checkTransfers(ctx, ts)
 	if err != nil {
 		panic(err)
+	}
+	if len(ts) == 0 {
+		return nil
+	}
+
+	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	if err != nil {
+		return err
 	}
 	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
 	if err != nil {
@@ -483,12 +487,15 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	if err != nil {
 		panic(err)
 	}
-	ts, err := node.checkTransfers(ctx, transfers)
+	transfers, err = node.checkTransfers(ctx, transfers)
 	if err != nil {
 		panic(err)
 	}
+	if len(transfers) == 0 {
+		return nil
+	}
 
-	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), ts)
+	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
 	if err != nil {
 		panic(err)
 	}
