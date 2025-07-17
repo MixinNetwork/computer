@@ -202,8 +202,16 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	extra := solana.MustPublicKeyFromBase58(user).Bytes()
 	extra = append(extra, depositHash[:]...)
 
+	ts, err := node.checkTransfers(ctx, ts)
+	if err != nil {
+		panic(err)
+	}
+	if len(ts) == 0 {
+		return nil
+	}
+
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-	err := node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 	if err != nil {
 		return err
 	}
@@ -460,12 +468,11 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 				continue
 			}
 		}
-		mint := solana.MustPublicKeyFromBase58(asset.Address)
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
 			AssetId:     asset.AssetId,
 			ChainId:     asset.ChainId,
-			Mint:        mint,
+			Mint:        solana.MustPublicKeyFromBase58(asset.Address),
 			Destination: solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry),
 			Amount:      amount.BigInt().Uint64(),
 			Decimals:    uint8(asset.Decimal),
@@ -479,6 +486,13 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	err = node.checkMintsUntilSufficient(ctx, transfers)
 	if err != nil {
 		panic(err)
+	}
+	transfers, err = node.checkTransfers(ctx, transfers)
+	if err != nil {
+		panic(err)
+	}
+	if len(transfers) == 0 {
+		return nil
 	}
 
 	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
@@ -808,4 +822,19 @@ func (node *Node) sortSolanaTransfers(transfers []*solanaApp.TokenTransfer) {
 		}
 		return transfers[i].Amount > transfers[j].Amount
 	})
+}
+
+func (node *Node) checkTransfers(ctx context.Context, transfers []*solanaApp.TokenTransfer) ([]*solanaApp.TokenTransfer, error) {
+	var ts []*solanaApp.TokenTransfer
+	for _, t := range transfers {
+		isNFT, err := node.RPCCheckNFT(ctx, t.Mint.String())
+		if err != nil {
+			logger.Printf("solana.RPCCheckNFT(%s) => %v", t.Mint.String(), err)
+			return nil, err
+		} else if isNFT {
+			continue
+		}
+		ts = append(ts, t)
+	}
+	return ts, nil
 }

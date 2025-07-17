@@ -442,6 +442,14 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		if amount.Cmp(dust) < 0 {
 			continue
 		}
+
+		isNFT, err := node.RPCCheckNFT(ctx, address)
+		if err != nil {
+			panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
+		} else if isNFT {
+			continue
+		}
+
 		old := assets[address]
 		if old == nil {
 			return fmt.Errorf("invalid missed user balance change: %s", address)
@@ -501,6 +509,12 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	for key, expected := range expectedChanges {
 		address := strings.Split(key, ":")[1]
 		if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
+			continue
+		}
+		isNFT, err := node.RPCCheckNFT(ctx, address)
+		if err != nil {
+			panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
+		} else if isNFT {
 			continue
 		}
 		actual := actualChanges[key]
