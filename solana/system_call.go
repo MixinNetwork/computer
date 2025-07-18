@@ -470,10 +470,6 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	if err != nil {
 		panic(err)
 	}
-	err = node.checkCreatedAtaUntilSufficient(ctx, dtx)
-	if err != nil {
-		panic(err)
-	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
 	if err != nil {
 		panic(err)
