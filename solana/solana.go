@@ -155,8 +155,18 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 		if _, ok := changes[key]; !ok {
 			continue
 		}
+
+		isSolAsset := true
 		decimal := uint8(solanaApp.SolanaDecimal)
 		if transfer.TokenAddress != solanaApp.SolanaEmptyAddress {
+			da, err := node.store.ReadDeployedAssetByAddress(ctx, transfer.TokenAddress)
+			if err != nil {
+				panic(err)
+			}
+			if da != nil {
+				isSolAsset = false
+			}
+
 			asset, err := node.RPCGetAsset(ctx, transfer.TokenAddress)
 			if err != nil {
 				logger.Printf("solana.RPCGetAsset(%s) => %v", transfer.TokenAddress, err)
@@ -177,7 +187,7 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			}
 		}
 		tsMap[transfer.Receiver] = append(tsMap[transfer.Receiver], &solanaApp.TokenTransfer{
-			SolanaAsset: true,
+			SolanaAsset: isSolAsset,
 			AssetId:     transfer.AssetId,
 			ChainId:     solanaApp.SolanaChainBase,
 			Mint:        solana.MustPublicKeyFromBase58(transfer.TokenAddress),

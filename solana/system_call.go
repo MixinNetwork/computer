@@ -470,7 +470,7 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	if err != nil {
 		panic(err)
 	}
-	err = node.processTransactionWithAddressLookups(ctx, tx)
+	err = node.processTransactionWithAddressLookups(ctx, dtx)
 	if err != nil {
 		panic(err)
 	}
@@ -491,10 +491,10 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	}
 	actualChanges := make(map[string]*big.Int)
 	for _, t := range transfers {
-		if t.Sender != user || t.Receiver != node.getMTGAddress(ctx).String() {
+		if t.Sender != user {
 			continue
 		}
-		key := fmt.Sprintf("%s:%s", t.Receiver, t.TokenAddress)
+		key := fmt.Sprintf("%s:%s", t.Sender, t.TokenAddress)
 		total := actualChanges[key]
 		if total != nil {
 			actualChanges[key] = new(big.Int).Add(total, t.Value)

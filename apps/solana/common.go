@@ -555,6 +555,16 @@ func ExtractInitialTransfersFromInstruction(
 				Decimal:      AssetDecimal,
 			}
 		}
+		if burn, ok := DecodeTokenBurn(accounts, cix.Data); ok {
+			addr := burn.GetMintAccount().PublicKey.String()
+			return &Transfer{
+				TokenAddress: addr,
+				AssetId:      ethereum.BuildChainAssetId(SolanaChainBase, addr),
+				Sender:       burn.GetOwnerAccount().PublicKey.String(),
+				Value:        new(big.Int).SetUint64(*burn.Amount),
+				Decimal:      *burn.Decimals,
+			}
+		}
 	}
 
 	return nil
