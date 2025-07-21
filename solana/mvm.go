@@ -835,6 +835,9 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	if err != nil || transaction == nil {
 		panic(fmt.Errorf("checkConfirmCallSignature(%s) => %v", signature, err))
 	}
+	if transaction.Meta.Err != nil {
+		return nil, nil, fmt.Errorf("failed solana tx: %s %v", signature, transaction.Meta.Err)
+	}
 	tx, err := transaction.Transaction.GetTransaction()
 	if err != nil {
 		panic(err)
