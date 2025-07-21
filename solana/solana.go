@@ -601,6 +601,9 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 			}
 			continue
 		}
+		if tb.Amount.Equal(post.Amount) {
+			continue
+		}
 		amount := post.Amount.Sub(tb.Amount)
 		changes[address] = &BalanceChange{
 			Amount:   amount,
