@@ -116,7 +116,12 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 	}
 
 	hash := tx.Signatures[0]
-	call, err := node.store.ReadSystemCallByHash(ctx, hash.String())
+	msg, err := tx.Message.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	msgHash := crypto.Sha256Hash(msg).String()
+	call, err := node.store.ReadSystemCallByMessage(ctx, msgHash)
 	if err != nil {
 		panic(err)
 	}
