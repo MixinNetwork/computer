@@ -479,8 +479,11 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 
 		signature := base58.Encode(extra[:64])
 		call, tx, err := node.checkConfirmCallSignature(ctx, signature)
+		logger.Printf("node.checkConfirmCallSignature(%s) => %v", signature, err)
 		if err != nil {
-			logger.Printf("node.checkConfirmCallSignature(%s) => %v", signature, err)
+			if strings.Contains(err.Error(), "failed solana tx") {
+				return node.failSystemCall(ctx, req, call)
+			}
 			return node.failRequest(ctx, req, "")
 		}
 
@@ -492,7 +495,11 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 			if n == 2 {
 				signature := base58.Encode(extra[64:128])
 				call, _, err = node.checkConfirmCallSignature(ctx, signature)
+				logger.Printf("node.checkConfirmCallSignature(%s) => %v", signature, err)
 				if err != nil {
+					if strings.Contains(err.Error(), "failed solana tx") {
+						return node.failSystemCall(ctx, req, call)
+					}
 					return node.failRequest(ctx, req, "")
 				}
 				calls = append(calls, call)
@@ -547,55 +554,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		if err != nil {
 			panic(err)
 		}
-		if call == nil {
-			return node.failRequest(ctx, req, "")
-		}
-
-		var outputs []*store.UserOutput
-		switch call.Type {
-		case store.CallTypeMain, store.CallTypePrepare:
-			main := call
-			if call.Type == store.CallTypePrepare {
-				c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStatePending)
-				logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, call, err)
-				if err != nil || c == nil {
-					panic(err)
-				}
-				main = c
-			}
-
-			os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
-			if err != nil {
-				panic(err)
-			}
-			outputs = os
-		}
-
-		var session *store.Session
-		post, err := node.getPostProcessCall(ctx, req, flag, call, extra[16:])
-		logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
-		if err != nil {
-			return node.failRequest(ctx, req, "")
-		}
-		if post != nil {
-			session = &store.Session{
-				Id:         post.RequestId,
-				RequestId:  post.RequestId,
-				MixinHash:  req.MixinHash.String(),
-				MixinIndex: req.Output.OutputIndex,
-				Index:      0,
-				Operation:  OperationTypeSignInput,
-				Public:     post.Public,
-				Extra:      post.MessageHex(),
-				CreatedAt:  req.CreatedAt,
-			}
-		}
-
-		err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs)
-		if err != nil {
-			panic(err)
-		}
-		return nil, ""
+		return node.failSystemCall(ctx, req, call)
 	default:
 		logger.Printf("invalid confirm flag: %d", flag)
 		return node.failRequest(ctx, req, "")
@@ -830,13 +789,69 @@ func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, 
 	return txs, compaction
 }
 
+func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall) ([]*mtg.Transaction, string) {
+	extra := req.ExtraBytes()
+	flag, extra := extra[0], extra[1:]
+
+	storage := extra[16:]
+	if call == nil {
+		panic(req)
+	}
+	if flag == FlagConfirmCallSuccess {
+		storage = nil
+	}
+
+	var outputs []*store.UserOutput
+	switch call.Type {
+	case store.CallTypeMain, store.CallTypePrepare:
+		main := call
+		if call.Type == store.CallTypePrepare {
+			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStatePending)
+			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, call, err)
+			if err != nil || c == nil {
+				panic(err)
+			}
+			main = c
+		}
+
+		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
+		if err != nil {
+			panic(err)
+		}
+		outputs = os
+	}
+
+	var session *store.Session
+	post, err := node.getPostProcessCall(ctx, req, FlagConfirmCallFail, call, storage)
+	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
+	if err != nil {
+		return node.failRequest(ctx, req, "")
+	}
+	if post != nil {
+		session = &store.Session{
+			Id:         post.RequestId,
+			RequestId:  post.RequestId,
+			MixinHash:  req.MixinHash.String(),
+			MixinIndex: req.Output.OutputIndex,
+			Index:      0,
+			Operation:  OperationTypeSignInput,
+			Public:     post.Public,
+			Extra:      post.MessageHex(),
+			CreatedAt:  req.CreatedAt,
+		}
+	}
+
+	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs)
+	if err != nil {
+		panic(err)
+	}
+	return nil, ""
+}
+
 func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *solana.Transaction, error) {
 	transaction, err := node.RPCGetTransaction(ctx, signature)
 	if err != nil || transaction == nil {
 		panic(fmt.Errorf("checkConfirmCallSignature(%s) => %v", signature, err))
-	}
-	if transaction.Meta.Err != nil {
-		return nil, nil, fmt.Errorf("failed solana tx: %s %v", signature, transaction.Meta.Err)
 	}
 	tx, err := transaction.Transaction.GetTransaction()
 	if err != nil {
@@ -871,6 +886,9 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	}
 	if call == nil || call.State != common.RequestStatePending {
 		return nil, nil, fmt.Errorf("checkConfirmCallSignature(%s) => invalid call %v", signature, call)
+	}
+	if transaction.Meta.Err != nil {
+		return call, nil, fmt.Errorf("failed solana tx: %s %v", signature, transaction.Meta.Err)
 	}
 	call.State = common.RequestStateDone
 	call.Hash = sql.NullString{Valid: true, String: signature}
