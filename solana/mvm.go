@@ -489,7 +489,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 
 		switch call.Type {
 		case store.CallTypeDeposit, store.CallTypePostProcess:
-			return node.confirmBurnRelatedSystemCall(ctx, req, call, tx)
+			return node.confirmBurnRelatedSystemCall(ctx, req, call, tx, signature)
 		case store.CallTypePrepare:
 			calls = append(calls, call)
 			if n == 2 {
@@ -781,7 +781,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {
 	as := node.GetSystemCallRelatedAsset(ctx, os)
-	txs, compaction := node.buildRefundTxs(ctx, req, as, members, threshod)
+	txs, compaction := node.buildRefundTxs(ctx, req, call.RequestId, as, members, threshod)
 	err := node.store.RefundOutputsWithRequest(ctx, req, call, os, txs, compaction)
 	if err != nil {
 		panic(err)
@@ -895,7 +895,7 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	return call, tx, nil
 }
 
-func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, tx *solana.Transaction) ([]*mtg.Transaction, string) {
+func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, tx *solana.Transaction, signature string) ([]*mtg.Transaction, string) {
 	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
@@ -923,7 +923,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 			amt = mc.NewIntegerFromString("0.02")
 		}
 
-		id := common.UniqueId(call.RequestId, fmt.Sprintf("BURN:%s", da.AssetId))
+		id := common.UniqueId(signature, fmt.Sprintf("BURN:%s", da.AssetId))
 		id = common.UniqueId(id, user.MixAddress)
 		memo := []byte(call.RequestId)
 		if call.Type == store.CallTypeDeposit {

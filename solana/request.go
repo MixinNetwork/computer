@@ -139,12 +139,12 @@ func (node *Node) parseUserRequest(out *mtg.Action) (*store.Request, error) {
 	return decodeRequest(out, m, RequestRoleUser)
 }
 
-func (node *Node) buildRefundTxs(ctx context.Context, req *store.Request, am []*ReferencedTxAsset, receivers []string, threshold int) ([]*mtg.Transaction, string) {
+func (node *Node) buildRefundTxs(ctx context.Context, req *store.Request, id string, am []*ReferencedTxAsset, receivers []string, threshold int) ([]*mtg.Transaction, string) {
 	var txs []*mtg.Transaction
 	for _, as := range am {
 		assetId := uuid.Must(uuid.FromString(as.AssetId)).String()
 		memo := fmt.Sprintf("refund:%s", assetId)
-		trace := common.UniqueId(req.Id, memo)
+		trace := common.UniqueId(id, memo)
 		t := node.buildTransaction(ctx, req.Output, node.conf.AppId, assetId, receivers, threshold, as.Amount.String(), []byte(memo), trace)
 		if t == nil {
 			// TODO then all other assets ignored?
