@@ -21,6 +21,7 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -848,7 +849,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	return nil, ""
 }
 
-func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *solana.Transaction, error) {
+func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *rpc.GetTransactionResult, error) {
 	transaction, err := node.RPCGetTransaction(ctx, signature)
 	if err != nil || transaction == nil {
 		panic(fmt.Errorf("checkConfirmCallSignature(%s) => %v", signature, err))
@@ -892,10 +893,10 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	}
 	call.State = common.RequestStateDone
 	call.Hash = sql.NullString{Valid: true, String: signature}
-	return call, tx, nil
+	return call, transaction, nil
 }
 
-func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, tx *solana.Transaction, signature string) ([]*mtg.Transaction, string) {
+func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, rpcTx *rpc.GetTransactionResult, signature string) ([]*mtg.Transaction, string) {
 	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
@@ -904,6 +905,12 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	if err != nil {
 		panic(err)
 	}
+
+	tx, err := rpcTx.Transaction.GetTransaction()
+	if err != nil {
+		panic(err)
+	}
+	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
 
 	var txs []*mtg.Transaction
 	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
@@ -914,13 +921,18 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 			panic(err)
 		}
 
-		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals)).String()
-		amt := mc.NewIntegerFromString(amount)
+		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
+		amt := mc.NewIntegerFromString(amount.String())
+		if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
+			amt = mc.NewIntegerFromString("0.02")
+		}
 		if amt.Sign() == 0 {
 			continue
 		}
-		if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
-			amt = mc.NewIntegerFromString("0.02")
+
+		change := changes[address]
+		if change == nil || !change.Amount.Equal(amount) {
+			continue
 		}
 
 		id := common.UniqueId(signature, fmt.Sprintf("BURN:%s", da.AssetId))
