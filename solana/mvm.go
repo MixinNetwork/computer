@@ -758,7 +758,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		}
 		actual := mc.NewIntegerFromString(out.Amount.String())
 		if expected.Cmp(actual) != 0 {
-			panic(fmt.Errorf("invalid deposit amount: %s %s", expected.String(), actual.String()))
+			continue
 		}
 		id := common.UniqueId(out.DepositHash.String, fmt.Sprintf("deposit-%d", i))
 		id = common.UniqueId(id, t.Receiver)
