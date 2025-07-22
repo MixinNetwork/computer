@@ -953,8 +953,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		}
 		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, da.AssetId, mix.Members(), int(mix.Threshold), amt.String(), memo, id)
 		if tx == nil {
-			// no compaction needed, just retry from observer
-			return node.failRequest(ctx, req, "")
+			return node.failRequest(ctx, req, da.AssetId)
 		}
 		txs = append(txs, tx)
 	}
