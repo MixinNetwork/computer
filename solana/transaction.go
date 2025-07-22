@@ -170,7 +170,7 @@ type SequencerResponse struct {
 }
 
 func (node *Node) Sequencer(ctx context.Context) (uint64, error) {
-	body, err := bot.SimpleRequest(ctx, "GET", "https://api.mixin.one/sequencer", nil)
+	body, err := bot.Request(ctx, "GET", "/sequencer", nil, "")
 	if err != nil {
 		return 0, err
 	}
