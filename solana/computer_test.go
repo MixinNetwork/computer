@@ -277,8 +277,25 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
 	extra := []byte{FlagConfirmCallSuccess, 1}
 	extra = append(extra, signature[:]...)
+
+	err = node.store.WritePendingBurnSystemCallIfNotExists(ctx, sub, &common.Operation{
+		Id:    id,
+		Extra: extra,
+	}, []string{common.SafeLitecoinChainId})
+	require.Nil(err)
+	nid := uuid.Must(uuid.NewV4()).String()
+	err = node.store.UpdatePendingBurnSystemCallRequestId(ctx, sub.RequestId, id, nid)
+	require.Nil(err)
+	cs, am, err := node.store.ListPendingBurnSystemCalls(ctx)
+	require.Nil(err)
+	require.Len(cs, 1)
+	require.Len(am, 1)
+	pending, err := node.store.CheckPendingBurnSystemCalls(ctx, cs[0], []string{common.SafeLitecoinChainId})
+	require.Nil(err)
+	require.False(pending)
+
 	for _, node := range nodes {
-		out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
+		out := testBuildObserverRequest(node, nid, OperationTypeConfirmCall, extra)
 		testStep(ctx, require, node, out)
 
 		sub, err := node.store.ReadSystemCallByRequestId(ctx, sub.RequestId, common.RequestStateDone)
@@ -288,11 +305,18 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 		require.Nil(err)
 		require.NotNil(call)
 
-		ar, _, err := node.store.ReadActionResult(ctx, id, id)
+		ar, _, err := node.store.ReadActionResult(ctx, nid, nid)
 		require.Nil(err)
 		require.Len(ar.Transactions, 1)
 		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
 	}
+
+	err = node.store.ConfirmPendingBurnSystemCall(ctx, sub.RequestId, nid)
+	require.Nil(err)
+	cs, am, err = node.store.ListPendingBurnSystemCalls(ctx)
+	require.Nil(err)
+	require.Len(cs, 0)
+	require.Len(am, 0)
 }
 
 func testObserverConfirmMainCall(ctx context.Context, require *require.Assertions, nodes []*Node, call *store.SystemCall) *store.SystemCall {
