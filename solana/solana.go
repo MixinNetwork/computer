@@ -601,6 +601,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		post := postMap[address]
 		if post == nil {
 			changes[address] = &BalanceChange{
+				Owner:    tb.Owner,
 				Amount:   tb.Amount.Neg(),
 				Decimals: tb.Decimals,
 			}
@@ -611,6 +612,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		}
 		amount := post.Amount.Sub(tb.Amount)
 		changes[address] = &BalanceChange{
+			Owner:    tb.Owner,
 			Amount:   amount,
 			Decimals: tb.Decimals,
 		}

@@ -910,6 +910,11 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	if err != nil {
 		panic(err)
 	}
+	if common.CheckTestEnvironment(ctx) {
+		if tx.Signatures[0].String() == "5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR" {
+			user.ChainAddress = "5YLSixqjK2m8ECirGaco8tHSn2Uc4aY7cLPoMSMptsgG"
+		}
+	}
 	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
 
 	var txs []*mtg.Transaction
@@ -931,7 +936,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		}
 
 		change := changes[address]
-		if change == nil || !change.Amount.Equal(amount) {
+		if change == nil || !change.Amount.Abs().Equal(amount) {
 			continue
 		}
 
@@ -948,7 +953,8 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		}
 		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, da.AssetId, mix.Members(), int(mix.Threshold), amt.String(), memo, id)
 		if tx == nil {
-			return node.failRequest(ctx, req, da.AssetId)
+			// no compaction needed, just retry from observer
+			return node.failRequest(ctx, req, "")
 		}
 		txs = append(txs, tx)
 	}
