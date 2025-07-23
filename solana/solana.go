@@ -116,7 +116,12 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 	}
 
 	hash := tx.Signatures[0]
-	call, err := node.store.ReadSystemCallByHash(ctx, hash.String())
+	msg, err := tx.Message.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	msgHash := crypto.Sha256Hash(msg).String()
+	call, err := node.store.ReadSystemCallByMessage(ctx, msgHash)
 	if err != nil {
 		panic(err)
 	}
@@ -596,6 +601,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		post := postMap[address]
 		if post == nil {
 			changes[address] = &BalanceChange{
+				Owner:    tb.Owner,
 				Amount:   tb.Amount.Neg(),
 				Decimals: tb.Decimals,
 			}
@@ -606,6 +612,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		}
 		amount := post.Amount.Sub(tb.Amount)
 		changes[address] = &BalanceChange{
+			Owner:    tb.Owner,
 			Amount:   amount,
 			Decimals: tb.Decimals,
 		}

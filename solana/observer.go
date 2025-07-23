@@ -60,6 +60,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	go node.unconfirmedCallLoop(ctx)
 	go node.unsignedCallLoop(ctx)
 	go node.signedCallLoop(ctx)
+	go node.pendingBurnLoop(ctx)
 
 	go node.solanaRPCBlocksLoop(ctx)
 
@@ -277,6 +278,17 @@ func (node *Node) unsignedCallLoop(ctx context.Context) {
 func (node *Node) signedCallLoop(ctx context.Context) {
 	for {
 		err := node.handleSignedCalls(ctx)
+		if err != nil {
+			panic(err)
+		}
+
+		time.Sleep(loopInterval)
+	}
+}
+
+func (node *Node) pendingBurnLoop(ctx context.Context) {
+	for {
+		err := node.handlePendingBurns(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -861,11 +873,17 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 		}
 	}
 
-	return node.sendObserverTransactionToGroup(ctx, &common.Operation{
+	op := &common.Operation{
 		Id:    id,
 		Type:  OperationTypeConfirmCall,
 		Extra: extra,
-	}, nil)
+	}
+	switch call.Type {
+	case store.CallTypeDeposit, store.CallTypePostProcess:
+		return node.handleBurnSystemCall(ctx, call, op)
+	default:
+		return node.sendObserverTransactionToGroup(ctx, op, nil)
+	}
 }
 
 func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall, callError error) error {
@@ -903,6 +921,65 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 	}, nil)
 }
 
+func (node *Node) handleBurnSystemCall(ctx context.Context, call *store.SystemCall, op *common.Operation) error {
+	tx, err := solana.TransactionFromBase64(call.Raw)
+	if err != nil {
+		panic(err)
+	}
+	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
+	// no burn instruction in system call
+	// all assets are Solana native assets
+	// would be handled when mtg receives the deposit from Solana
+	if len(bs) == 0 {
+		return node.sendObserverTransactionToGroup(ctx, op, nil)
+	}
+
+	var assets []string
+	for _, burn := range bs {
+		address := burn.GetMintAccount().PublicKey.String()
+		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+		if err != nil || da == nil {
+			panic(err)
+		}
+		assets = append(assets, da.AssetId)
+	}
+	return node.store.WritePendingBurnSystemCallIfNotExists(ctx, call, op, assets)
+}
+
+func (node *Node) handlePendingBurns(ctx context.Context) error {
+	cs, am, err := node.store.ListPendingBurnSystemCalls(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range cs {
+		pending, err := node.store.CheckPendingBurnSystemCalls(ctx, c, am[c.Id])
+		if err != nil {
+			panic(err)
+		}
+		if pending {
+			continue
+		}
+		call, err := node.store.ReadSystemCallByRequestId(ctx, c.RequestId, common.RequestStatePending)
+		if err != nil || call == nil {
+			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.RequestId, call, err))
+		}
+		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
+		if !sufficient {
+			continue
+		}
+		err = node.confirmBurnRelatedSystemCallToGroup(ctx, &common.Operation{
+			Id:    c.RequestId,
+			Extra: c.ExtraBytes(),
+			Type:  OperationTypeConfirmCall,
+		}, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (node *Node) ReadSpareNonceAccountWithCall(ctx context.Context, cid string) *store.NonceAccount {
 	nonce, err := node.store.ReadNonceAccountByCall(ctx, cid)
 	if err != nil {
@@ -938,4 +1015,37 @@ func (node *Node) refreshAssets(ctx context.Context) error {
 		return err
 	}
 	return node.store.UpdateExternalAssetsInfo(ctx, as)
+}
+
+func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, call *store.SystemCall) bool {
+	tx, err := solana.TransactionFromBase64(call.Raw)
+	if err != nil {
+		panic(err)
+	}
+	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
+	if len(bs) == 0 {
+		panic(call)
+	}
+	for _, burn := range bs {
+		address := burn.GetMintAccount().PublicKey.String()
+		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+		if err != nil || da == nil {
+			panic(err)
+		}
+		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
+		balance := node.getAssetBalanceAt(ctx, ^uint64(0), da.AssetId)
+		if balance.Cmp(amount) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (node *Node) getAssetBalanceAt(ctx context.Context, sequence uint64, assetId string) decimal.Decimal {
+	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+	total := decimal.NewFromInt(0)
+	for _, o := range os {
+		total = total.Add(o.Amount)
+	}
+	return total
 }

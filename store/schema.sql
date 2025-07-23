@@ -238,6 +238,20 @@ CREATE TABLE IF NOT EXISTS failed_calls (
 );
 
 
+CREATE TABLE IF NOT EXISTS burn_system_calls (
+  call_id       VARCHAR NOT NULL,
+  asset_id      VARCHAR NOT NULL,
+  request_id    VARCHAR NOT NULL,
+  extra         TEXT NOT NULL,
+  state         INTEGER NOT NULL,
+  created_at    TIMESTAMP NOT NULL,
+  updated_at    TIMESTAMP NOT NULL,
+  PRIMARY KEY ('call_id', 'asset_id')
+);
+
+CREATE INDEX IF NOT EXISTS burn_system_calls_by_state_createdx ON burn_system_calls(state, created_at);
+
+
 CREATE TABLE IF NOT EXISTS action_results (
   output_id       VARCHAR NOT NULL,
   compaction      VARCHAR NOT NULL,

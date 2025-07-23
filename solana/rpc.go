@@ -66,6 +66,9 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 			return nil, fmt.Errorf("solana.RPCGetTransaction(%s) => %v", hash, err)
 		}
 		if rpcTx != nil {
+			if rpcTx.Meta.Err != nil {
+				return nil, fmt.Errorf("%v", rpcTx.Meta.Err)
+			}
 			return rpcTx, nil
 		}
 

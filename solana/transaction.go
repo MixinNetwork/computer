@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	"github.com/MixinNetwork/computer/store"
 	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
@@ -90,6 +91,33 @@ func (node *Node) buildTransactionWithReferences(ctx context.Context, act *mtg.A
 		return act.BuildTransactionWithReference(ctx, traceId, opponentAppId, assetId, amount, string(memo), receivers, threshold, tx)
 	}
 	return act.BuildTransaction(ctx, traceId, opponentAppId, assetId, amount, string(memo), receivers, threshold)
+}
+
+func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *common.Operation, call *store.SystemCall) error {
+	request, err := node.store.ReadRequest(ctx, op.Id)
+	if err != nil {
+		panic(err)
+	}
+	if request == nil {
+		return node.sendObserverTransactionToGroup(ctx, op, nil)
+	}
+
+	switch request.State {
+	case common.RequestStateInitial:
+		return nil
+	case common.RequestStateDone:
+		err = node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId, request.Id)
+		if err != nil {
+			return fmt.Errorf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
+		}
+	case common.RequestStateFailed:
+		id := common.UniqueId(op.Id, "RETRY")
+		err = node.store.UpdatePendingBurnSystemCallRequestId(ctx, call.RequestId, request.Id, id)
+		if err != nil {
+			return fmt.Errorf("store.UpdatePendingBurnSystemCallRequestId(%s %s %s) => %v", call.RequestId, request.Id, id, err)
+		}
+	}
+	return nil
 }
 
 func (node *Node) sendObserverTransactionToGroup(ctx context.Context, op *common.Operation, references []crypto.Hash) error {
