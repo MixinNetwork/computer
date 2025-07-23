@@ -6,7 +6,7 @@ require (
 	github.com/MixinNetwork/bot-api-go-client/v3 v3.16.8
 	github.com/MixinNetwork/mixin v0.18.27
 	github.com/MixinNetwork/multi-party-sig v0.4.1
-	github.com/MixinNetwork/safe v0.20.0
+	github.com/MixinNetwork/safe v0.20.1
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/davecgh/go-spew v1.1.1
@@ -15,7 +15,7 @@ require (
 	github.com/fogleman/gg v1.3.0
 	github.com/fox-one/mixin-sdk-go/v2 v2.1.0
 	github.com/gagliardetto/binary v0.8.0
-	github.com/gagliardetto/solana-go v1.12.0
+	github.com/gagliardetto/solana-go v1.13.0
 	github.com/gagliardetto/treeout v0.1.4
 	github.com/gofrs/uuid/v5 v5.3.2
 	github.com/pelletier/go-toml v1.9.5

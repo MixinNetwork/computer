@@ -383,7 +383,15 @@ func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction
 	)
 
 	for _, inner := range meta.InnerInstructions {
-		innerInstructions[inner.Index] = inner.Instructions
+		sis := make([]solana.CompiledInstruction, len(inner.Instructions))
+		for idx, ii := range inner.Instructions {
+			sis[idx] = solana.CompiledInstruction{
+				ProgramIDIndex: ii.ProgramIDIndex,
+				Accounts:       ii.Accounts,
+				Data:           ii.Data,
+			}
+		}
+		innerInstructions[inner.Index] = sis
 	}
 
 	for _, balance := range meta.PreTokenBalances {
