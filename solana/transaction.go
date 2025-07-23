@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
@@ -163,29 +162,6 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 	}}, []byte(m), traceId, *node.SafeUser())
 	logger.Printf("node.CreateObjectStorageUntilSufficient(%s) => %v", traceId, err)
 	return err
-}
-
-type SequencerResponse struct {
-	Sequence uint64 `json:"sequence"`
-}
-
-func (node *Node) Sequencer(ctx context.Context) (uint64, error) {
-	body, err := bot.Request(ctx, "GET", "/sequencer", nil, "")
-	if err != nil {
-		return 0, err
-	}
-	var resp struct {
-		Data  *SequencerResponse `json:"data"`
-		Error bot.Error          `json:"error"`
-	}
-	err = json.Unmarshal(body, &resp)
-	if err != nil {
-		return 0, err
-	}
-	if resp.Error.Code > 0 {
-		return 0, resp.Error
-	}
-	return resp.Data.Sequence, nil
 }
 
 func encodeOperation(op *common.Operation) []byte {

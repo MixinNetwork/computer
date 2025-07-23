@@ -947,10 +947,6 @@ func (node *Node) handleBurnSystemCall(ctx context.Context, call *store.SystemCa
 }
 
 func (node *Node) handlePendingBurns(ctx context.Context) error {
-	sequence, err := node.Sequencer(ctx)
-	if err != nil {
-		panic(err)
-	}
 	cs, am, err := node.store.ListPendingBurnSystemCalls(ctx)
 	if err != nil {
 		return err
@@ -967,7 +963,7 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 		if err != nil || call == nil {
 			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.RequestId, call, err))
 		}
-		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call, sequence)
+		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
 		if !sufficient {
 			continue
 		}
@@ -1021,7 +1017,7 @@ func (node *Node) refreshAssets(ctx context.Context) error {
 	return node.store.UpdateExternalAssetsInfo(ctx, as)
 }
 
-func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, call *store.SystemCall, sequence uint64) bool {
+func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, call *store.SystemCall) bool {
 	tx, err := solana.TransactionFromBase64(call.Raw)
 	if err != nil {
 		panic(err)
@@ -1037,7 +1033,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 			panic(err)
 		}
 		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		balance := node.getAssetBalanceAt(ctx, sequence, da.AssetId)
+		balance := node.getAssetBalanceAt(ctx, ^uint64(0), da.AssetId)
 		if balance.Cmp(amount) < 0 {
 			return false
 		}
