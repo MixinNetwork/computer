@@ -427,28 +427,48 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 			continue
 		}
 		switch call.State {
-		case common.RequestStateFailed:
-			node.releaseLockedNonceAccount(ctx, nonce)
-		case common.RequestStateDone:
-			if nonce.UpdatedBy.Valid && nonce.UpdatedBy.String == call.RequestId {
+		case common.RequestStateDone, common.RequestStateFailed:
+		default:
+			continue
+		}
+
+		// release nonce account that is occupied by unconfirmed solana tx
+		if call.State == common.RequestStateFailed {
+			tx, err := solana.TransactionFromBase64(call.Raw)
+			if err != nil {
+				panic(err)
+			}
+			rpcTx, err := node.RPCGetTransaction(ctx, tx.Signatures[0].String())
+			if err != nil {
+				panic(err)
+			}
+			if rpcTx == nil {
 				node.releaseLockedNonceAccount(ctx, nonce)
-				return nil
+				continue
 			}
-			for {
-				newNonceHash, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
-				if err != nil {
-					panic(err)
-				}
-				if newNonceHash.String() == nonce.Hash {
-					time.Sleep(3 * time.Second)
-					continue
-				}
-				err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
-				if err != nil {
-					panic(err)
-				}
-				break
+			if rpcTx.Meta.Err == nil {
+				panic(tx.Signatures[0].String())
 			}
+		}
+
+		if nonce.UpdatedBy.Valid && nonce.UpdatedBy.String == call.RequestId {
+			node.releaseLockedNonceAccount(ctx, nonce)
+			continue
+		}
+		for {
+			newNonceHash, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
+			if err != nil {
+				panic(err)
+			}
+			if newNonceHash.String() == nonce.Hash {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
+			if err != nil {
+				panic(err)
+			}
+			break
 		}
 	}
 	return nil
