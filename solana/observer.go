@@ -402,6 +402,7 @@ func (node *Node) createNonceAccounts(ctx context.Context) error {
 }
 
 func (node *Node) releaseNonceAccounts(ctx context.Context) error {
+	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
 	as, err := node.store.ListLockedNonceAccounts(ctx)
 	if err != nil {
 		return err
@@ -435,6 +436,10 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 		// release nonce account that is occupied by unconfirmed solana tx
 		if call.State == common.RequestStateFailed {
 			tx, err := solana.TransactionFromBase64(call.Raw)
+			if err != nil {
+				panic(err)
+			}
+			_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
 			if err != nil {
 				panic(err)
 			}
