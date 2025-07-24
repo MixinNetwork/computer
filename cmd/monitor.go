@@ -51,13 +51,13 @@ func MonitorComputer(ctx context.Context, node *computer.Node, mixin *mixin.Clie
 	}
 }
 
-func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.Client, mdb *mtg.SQLite3Store, store *store.SQLite3Store, conf *computer.Configuration, grp *mtg.Group, startedAt time.Time, version string) (string, error) {
+func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.Client, mdb *mtg.SQLite3Store, db *store.SQLite3Store, conf *computer.Configuration, grp *mtg.Group, startedAt time.Time, version string) (string, error) {
 	state := "🧱🧱🧱🧱🧱 Computer 🧱🧱🧱🧱🧱\n"
 	state = state + fmt.Sprintf("⏲️ Run time: %s\n", time.Since(startedAt).String())
 	state = state + fmt.Sprintf("⏲️ Group: %s 𝕋%d\n", mixinnet.HashMembers(grp.GetMembers())[:16], grp.GetThreshold())
 
 	state = state + "\n𝗠𝙏𝗚\n"
-	req, err := store.ReadLatestRequest(ctx)
+	req, err := db.ReadLatestRequest(ctx)
 	if err != nil {
 		return "", err
 	} else if req != nil {
@@ -87,31 +87,42 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 	state = state + fmt.Sprintf("🫰 Solana Deposit Entry: %s\n", node.SolanaDepositEntry())
 
 	state = state + "\n𝗔𝙋𝗣\n"
-	uc, err := store.CountUsers(ctx)
+	uc, err := db.CountUsers(ctx)
 	if err != nil {
 		return "", err
 	}
 	state = state + fmt.Sprintf("🔑 Registered Users: %d\n", uc)
-	tc, err := store.CountUserSystemCallByState(ctx, common.RequestStateInitial)
+	tc, err := db.CountUserSystemCallByState(ctx, common.RequestStateInitial)
 	if err != nil {
 		return "", err
 	}
 	state = state + fmt.Sprintf("💷 Initial Transactions: %d\n", tc)
-	tc, err = store.CountUserSystemCallByState(ctx, common.RequestStatePending)
+	tc, err = db.CountUserSystemCallByState(ctx, common.RequestStatePending)
 	if err != nil {
 		return "", err
 	}
 	state = state + fmt.Sprintf("💶 Pending Transactions: %d\n", tc)
-	tc, err = store.CountUserSystemCallByState(ctx, common.RequestStateDone)
+	tc, err = db.CountUserSystemCallByState(ctx, common.RequestStateDone)
 	if err != nil {
 		return "", err
 	}
 	state = state + fmt.Sprintf("💵 Done Transactions: %d\n", tc)
-	tc, err = store.CountUserSystemCallByState(ctx, common.RequestStateFailed)
+	tc, err = db.CountUserSystemCallByState(ctx, common.RequestStateFailed)
 	if err != nil {
 		return "", err
 	}
 	state = state + fmt.Sprintf("💸 Failed Transactions: %d\n", tc)
+
+	state = state + "\nSigner\n"
+	ss, err := db.SessionsState(ctx)
+	if err != nil {
+		return "", err
+	}
+	state = state + fmt.Sprintf("🔑 Initial Sessions: %d\n", ss.Initial)
+	state = state + fmt.Sprintf("🔑 Pending Sessions: %d\n", ss.Pending)
+	state = state + fmt.Sprintf("🔑 Final Sessions: %d\n", ss.Done)
+	offset := node.ReadPropertyAsTime(ctx, store.MPCMessageTimeKey)
+	state = state + fmt.Sprintf("🔑 Processed MPC Message: %s\n", offset)
 
 	state = state + "\nBalances\n"
 	_, c, err := common.SafeAssetBalance(ctx, mixin, []string{conf.MTG.App.AppId}, 1, conf.AssetId)
@@ -145,11 +156,11 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String())
 
 		state = state + "\nObserver\n"
-		_, am, err := store.ListPendingBurnSystemCalls(ctx)
+		_, am, err := db.ListPendingBurnSystemCalls(ctx)
 		state = state + fmt.Sprintf("💶 Pending Burn Calls: %d\n", len(am))
 	}
 
-	state = state + fmt.Sprintf("🦷 Binary version: %s", version)
+	state = state + fmt.Sprintf("\n🦷 Binary version: %s", version)
 	return state, nil
 }
 

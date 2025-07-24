@@ -204,6 +204,11 @@ func (node *Node) acceptIncomingMessages(ctx context.Context) {
 		if err != nil {
 			panic(err)
 		}
+		err = node.writeRequestTime(ctx, store.MPCMessageTimeKey, mm.CreatedAt)
+		if err != nil {
+			panic(err)
+		}
+
 		sessionId, msg, err := unmarshalSessionMessage(mm.Data)
 		logger.Verbosef("node.acceptIncomingMessages(%x, %d) => %s %s %x", sessionId, msg.RoundNumber, mm.Peer, mm.CreatedAt, msg.SSID)
 		if err != nil {

@@ -261,7 +261,6 @@ type State struct {
 	Initial int
 	Pending int
 	Done    int
-	Keys    int
 }
 
 func (s *SQLite3Store) SessionsState(ctx context.Context) (*State, error) {
@@ -289,12 +288,6 @@ func (s *SQLite3Store) SessionsState(ctx context.Context) (*State, error) {
 
 	row = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE state=?", common.RequestStateDone)
 	err = row.Scan(&state.Done)
-	if err != nil {
-		return nil, err
-	}
-
-	row = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM keys")
-	err = row.Scan(&state.Keys)
 	if err != nil {
 		return nil, err
 	}
