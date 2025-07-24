@@ -143,6 +143,10 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 			return "", err
 		}
 		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String())
+
+		state = state + "\nObserver\n"
+		_, am, err := store.ListPendingBurnSystemCalls(ctx)
+		state = state + fmt.Sprintf("💶 Pending Burn Calls: %d\n", len(am))
 	}
 
 	state = state + fmt.Sprintf("🦷 Binary version: %s", version)
