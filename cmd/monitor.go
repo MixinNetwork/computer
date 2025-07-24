@@ -113,6 +113,15 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 	}
 	state = state + fmt.Sprintf("💸 Failed Transactions: %d\n", tc)
 
+	state = state + "\nSigner\n"
+	ss, err := store.SessionsState(ctx)
+	if err != nil {
+		return "", err
+	}
+	state = state + fmt.Sprintf("🔑 Initial sessions: %d\n", ss.Initial)
+	state = state + fmt.Sprintf("🔑 Pending sessions: %d\n", ss.Pending)
+	state = state + fmt.Sprintf("🔑 Final sessions: %d\n", ss.Done)
+
 	state = state + "\nBalances\n"
 	_, c, err := common.SafeAssetBalance(ctx, mixin, []string{conf.MTG.App.AppId}, 1, conf.AssetId)
 	if err != nil {
@@ -149,7 +158,7 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		state = state + fmt.Sprintf("💶 Pending Burn Calls: %d\n", len(am))
 	}
 
-	state = state + fmt.Sprintf("🦷 Binary version: %s", version)
+	state = state + fmt.Sprintf("\n🦷 Binary version: %s", version)
 	return state, nil
 }
 
