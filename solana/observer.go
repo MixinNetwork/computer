@@ -86,7 +86,7 @@ func (node *Node) initMPCKeys(ctx context.Context) error {
 			return node.writeRequestTime(ctx, store.UserInitializeTimeKey, time.Now())
 		}
 
-		requestAt := node.readPropertyAsTime(ctx, store.KeygenRequestTimeKey)
+		requestAt := node.ReadPropertyAsTime(ctx, store.KeygenRequestTimeKey)
 		if time.Since(requestAt) < time.Hour {
 			time.Sleep(1 * time.Minute)
 			continue
@@ -310,7 +310,7 @@ func (node *Node) refreshAssetsLoop(ctx context.Context) {
 }
 
 func (node *Node) initializeUsers(ctx context.Context) error {
-	offset := node.readPropertyAsTime(ctx, store.UserInitializeTimeKey)
+	offset := node.ReadPropertyAsTime(ctx, store.UserInitializeTimeKey)
 	us, err := node.store.ListNewUsersAfter(ctx, offset)
 	if err != nil || len(us) == 0 {
 		return err
@@ -387,7 +387,7 @@ func (node *Node) createNonceAccounts(ctx context.Context) error {
 	if err != nil || count > 100 {
 		return err
 	}
-	requested := node.readPropertyAsTime(ctx, store.NonceAccountRequestTimeKey)
+	requested := node.ReadPropertyAsTime(ctx, store.NonceAccountRequestTimeKey)
 	if requested.Add(10 * time.Second).After(time.Now().UTC()) {
 		return nil
 	}
@@ -545,7 +545,7 @@ func (node *Node) handleWithdrawalsFee(ctx context.Context) error {
 }
 
 func (node *Node) handleUnconfirmedWithdrawals(ctx context.Context) error {
-	start := node.readPropertyAsTime(ctx, store.WithdrawalConfirmRequestTimeKey)
+	start := node.ReadPropertyAsTime(ctx, store.WithdrawalConfirmRequestTimeKey)
 	txs := node.group.ListConfirmedWithdrawalTransactionsAfter(ctx, start, 100)
 	for _, tx := range txs {
 		if !tx.WithdrawalHash.Valid {

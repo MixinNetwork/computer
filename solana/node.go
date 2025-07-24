@@ -157,7 +157,7 @@ func (node *Node) readSolanaBlockCheckpoint(ctx context.Context) (int64, error) 
 	return height, nil
 }
 
-func (node *Node) readPropertyAsTime(ctx context.Context, key string) time.Time {
+func (node *Node) ReadPropertyAsTime(ctx context.Context, key string) time.Time {
 	val, err := node.store.ReadProperty(ctx, key)
 	if err != nil {
 		panic(err)
