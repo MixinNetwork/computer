@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -984,19 +985,15 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 		if pending {
 			continue
 		}
-		call, err := node.store.ReadSystemCallByRequestId(ctx, c.Id, common.RequestStatePending)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, c.Id, 0)
 		if err != nil || call == nil {
-			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.RequestId, call, err))
-		}
-		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
-		if !sufficient {
-			continue
+			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.Id, call, err))
 		}
 		err = node.confirmBurnRelatedSystemCallToGroup(ctx, &common.Operation{
 			Id:    c.RequestId,
 			Extra: c.ExtraBytes(),
 			Type:  OperationTypeConfirmCall,
-		}, nil)
+		}, call)
 		if err != nil {
 			return err
 		}
@@ -1058,7 +1055,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 			panic(err)
 		}
 		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		balance := node.getAssetBalanceAt(ctx, ^uint64(0), da.AssetId)
+		balance := node.getAssetBalanceAt(ctx, math.MaxInt64, da.AssetId)
 		if balance.Cmp(amount) < 0 {
 			return false
 		}

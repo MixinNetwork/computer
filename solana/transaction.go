@@ -99,6 +99,10 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 		panic(err)
 	}
 	if request == nil {
+		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
+		if !sufficient {
+			return nil
+		}
 		return node.sendObserverTransactionToGroup(ctx, op, nil)
 	}
 
