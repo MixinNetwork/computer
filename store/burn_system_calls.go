@@ -81,7 +81,7 @@ func (s *SQLite3Store) UpdatePendingBurnSystemCallRequestId(ctx context.Context,
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ConfirmPendingBurnSystemCall(ctx context.Context, callId, rid string) error {
+func (s *SQLite3Store) ConfirmPendingBurnSystemCall(ctx context.Context, callId string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -91,8 +91,8 @@ func (s *SQLite3Store) ConfirmPendingBurnSystemCall(ctx context.Context, callId,
 	}
 	defer common.Rollback(tx)
 
-	query := "UPDATE burn_system_calls SET state=?, updated_at=? WHERE call_id=? AND request_id=? AND state=?"
-	_, err = tx.ExecContext(ctx, query, common.RequestStateDone, time.Now().UTC(), callId, rid, common.RequestStateInitial)
+	query := "UPDATE burn_system_calls SET state=?, updated_at=? WHERE call_id=? AND state=?"
+	_, err = tx.ExecContext(ctx, query, common.RequestStateDone, time.Now().UTC(), callId, common.RequestStateInitial)
 	if err != nil {
 		return fmt.Errorf("UPDATE burn_system_calls %v", err)
 	}

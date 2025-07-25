@@ -94,6 +94,14 @@ func (node *Node) buildTransactionWithReferences(ctx context.Context, act *mtg.A
 }
 
 func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *common.Operation, call *store.SystemCall) error {
+	switch call.State {
+	case common.RequestStateDone, common.RequestStateFailed:
+		err := node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId)
+		if err != nil {
+			return fmt.Errorf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
+		}
+	}
+
 	request, err := node.store.ReadRequest(ctx, op.Id)
 	if err != nil {
 		panic(err)
@@ -101,6 +109,7 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 	if request == nil {
 		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
 		if !sufficient {
+			logger.Printf("store.checkSufficientBalanceForBurnSystemCall(%s)", call.RequestId)
 			return nil
 		}
 		return node.sendObserverTransactionToGroup(ctx, op, nil)
@@ -110,7 +119,7 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 	case common.RequestStateInitial:
 		return nil
 	case common.RequestStateDone:
-		err = node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId, request.Id)
+		err = node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId)
 		if err != nil {
 			return fmt.Errorf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
 		}
