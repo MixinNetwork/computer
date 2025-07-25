@@ -418,7 +418,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if call == nil {
+		if call == nil || call.State == common.RequestStateInitial {
 			if nonce.Expired() {
 				node.releaseLockedNonceAccount(ctx, nonce)
 			}
