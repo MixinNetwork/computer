@@ -984,7 +984,7 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 			panic(err)
 		}
 		if pending {
-			logger.Printf("store.CheckPendingBurnSystemCalls(%s)", c.RequestId)
+			logger.Printf("store.CheckPendingBurnSystemCalls(%s)", c.Id)
 			continue
 		}
 		call, err := node.store.ReadSystemCallByRequestId(ctx, c.Id, 0)

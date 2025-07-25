@@ -137,7 +137,7 @@ func (s *SQLite3Store) CheckPendingBurnSystemCalls(ctx context.Context, call *Bu
 	defer common.Rollback(tx)
 
 	for _, id := range as {
-		existed, err := s.checkExistence(ctx, tx, "SELECT call_id FROM burn_system_calls WHERE asset_id=? AND created_at<?", id, call.CreatedAt)
+		existed, err := s.checkExistence(ctx, tx, "SELECT call_id FROM burn_system_calls WHERE asset_id=? AND state=? AND created_at<?", id, common.RequestStateInitial, call.CreatedAt)
 		if err != nil || existed {
 			return true, err
 		}
