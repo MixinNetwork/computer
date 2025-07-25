@@ -311,7 +311,7 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
 	}
 
-	err = node.store.ConfirmPendingBurnSystemCall(ctx, sub.RequestId, nid)
+	err = node.store.ConfirmPendingBurnSystemCall(ctx, sub.RequestId)
 	require.Nil(err)
 	cs, am, err = node.store.ListPendingBurnSystemCalls(ctx)
 	require.Nil(err)
