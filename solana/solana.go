@@ -180,7 +180,7 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			decimal = uint8(asset.Decimals)
 		}
 		if transfer.TokenAddress == solanaApp.SolanaEmptyAddress {
-			if transfer.Value.Uint64() < 10 {
+			if transfer.Value.Uint64() < rentExemptBalance {
 				continue
 			}
 			index, err := tx.GetAccountIndex(solana.MustPublicKeyFromBase58(transfer.Receiver))
