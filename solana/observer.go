@@ -875,6 +875,7 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 
 // deposited assets to run system call and new assets received in system call are all handled here
 func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCall, txx *solana.Transaction, meta *rpc.TransactionMeta, hashes []solana.Signature) error {
+	logger.Printf("node.processSuccessedCall(%s)", call.RequestId)
 	id := common.UniqueId(call.RequestId, "confirm-success")
 	extra := []byte{FlagConfirmCallSuccess}
 	extra = append(extra, byte(len(hashes)))
@@ -1057,6 +1058,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
 		balance := node.getAssetBalanceAt(ctx, math.MaxInt64, da.AssetId)
 		if balance.Cmp(amount) < 0 {
+			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, da.AssetId, amount.String(), balance.String())
 			return false
 		}
 	}
