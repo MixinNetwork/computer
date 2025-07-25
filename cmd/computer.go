@@ -63,7 +63,7 @@ func ComputerBootCmd(c *cli.Context) error {
 	}
 	mc.Computer.MTG.App.SpendPrivateKey = key.String()
 
-	messenger, err := messenger.NewMixinMessenger(ctx, mc.Computer.Messenger())
+	messenger, err := messenger.NewMixinMessenger(ctx, mc.Computer.Messenger(), mc.Computer.MTG.Genesis.Members)
 	if err != nil {
 		return err
 	}
