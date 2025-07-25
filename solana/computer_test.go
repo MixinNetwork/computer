@@ -31,7 +31,7 @@ var sequence uint64 = 5000000
 
 func TestComputer(t *testing.T) {
 	require := require.New(t)
-	ctx, nodes, mds := testPrepare(require)
+	ctx, nodes, mds := testPrepare(require, false)
 
 	testObserverRequestGenerateKey(ctx, require, nodes)
 	testObserverRequestCreateNonceAccount(ctx, require, nodes)
@@ -55,7 +55,7 @@ func TestComputer(t *testing.T) {
 
 func TestCompaction(t *testing.T) {
 	require := require.New(t)
-	ctx, nodes, mds := testPrepare(require)
+	ctx, nodes, mds := testPrepare(require, false)
 
 	testObserverRequestGenerateKey(ctx, require, nodes)
 	testObserverRequestCreateNonceAccount(ctx, require, nodes)
@@ -156,7 +156,7 @@ func TestCompaction(t *testing.T) {
 
 func TestDepositCompaction(t *testing.T) {
 	require := require.New(t)
-	ctx, nodes, mds := testPrepare(require)
+	ctx, nodes, mds := testPrepare(require, false)
 
 	testObserverRequestGenerateKey(ctx, require, nodes)
 	testObserverRequestCreateNonceAccount(ctx, require, nodes)
@@ -211,7 +211,7 @@ func TestDepositCompaction(t *testing.T) {
 
 func TestPostprocessCompaction(t *testing.T) {
 	require := require.New(t)
-	ctx, nodes, mds := testPrepare(require)
+	ctx, nodes, mds := testPrepare(require, false)
 
 	testObserverRequestGenerateKey(ctx, require, nodes)
 	testObserverRequestCreateNonceAccount(ctx, require, nodes)
@@ -880,7 +880,7 @@ func testStep(ctx context.Context, require *require.Assertions, node *Node, out 
 	}
 }
 
-func testPrepare(require *require.Assertions) (context.Context, []*Node, []*mtg.SQLite3Store) {
+func testPrepare(require *require.Assertions, signerTest bool) (context.Context, []*Node, []*mtg.SQLite3Store) {
 	logger.SetLevel(logger.INFO)
 	ctx := context.Background()
 	ctx = common.EnableTestEnvironment(ctx)
@@ -903,6 +903,9 @@ func testPrepare(require *require.Assertions) (context.Context, []*Node, []*mtg.
 		go nodes[i].loopPreparedSessions(ctx)
 		go nodes[i].loopPendingSessions(ctx)
 		go nodes[i].acceptIncomingMessages(ctx)
+		if signerTest {
+			go nodes[i].loopInitialSessions(ctx)
+		}
 	}
 
 	return ctx, nodes, mds

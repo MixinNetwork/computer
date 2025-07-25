@@ -33,7 +33,7 @@ const (
 
 func TestSolana(t *testing.T) {
 	require := require.New(t)
-	ctx, nodes, _ := testPrepare(require)
+	ctx, nodes, _ := testPrepare(require, true)
 	testFROSTPrepareKeys(ctx, require, nodes, testFROSTKeys1, "fb17b60698d36d45bc624c8e210b4c845233c99a7ae312a27e883a8aa8444b9b")
 	testFROSTPrepareKeys(ctx, require, nodes, testFROSTKeys2, "4375bcd5726aadfdd159135441bbe659c705b37025c5c12854e9906ca8500295")
 
