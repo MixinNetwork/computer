@@ -353,7 +353,10 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 	var postprocess *store.SystemCall
 	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 	for _, node := range nodes {
-		go testStep(ctx, require, node, out)
+		testStep(ctx, require, node, out)
+	}
+	for _, node := range nodes {
+		node.handleInitialSessions(ctx)
 	}
 	testObserverRequestSignSystemCall(ctx, require, nodes, cid)
 	for _, node := range nodes {
@@ -509,9 +512,11 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 
 	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
 	for _, node := range nodes {
-		go testStep(ctx, require, node, out)
+		testStep(ctx, require, node, out)
 	}
-	time.Sleep(10 * time.Second)
+	for _, node := range nodes {
+		node.handleInitialSessions(ctx)
+	}
 	for _, node := range nodes {
 		call, err := node.store.ReadSystemCallByRequestId(ctx, c.RequestId, common.RequestStatePending)
 		require.Nil(err)
@@ -895,7 +900,6 @@ func testPrepare(require *require.Assertions) (context.Context, []*Node, []*mtg.
 		nodes[i].network = network
 		ctx = context.WithValue(ctx, partyContextKey, string(nodes[i].id))
 		go network.mtgLoop(ctx, nodes[i])
-		go nodes[i].loopInitialSessions(ctx)
 		go nodes[i].loopPreparedSessions(ctx)
 		go nodes[i].loopPendingSessions(ctx)
 		go nodes[i].acceptIncomingMessages(ctx)

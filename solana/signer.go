@@ -41,34 +41,38 @@ func (node *Node) bootSigner(ctx context.Context) {
 func (node *Node) loopInitialSessions(ctx context.Context) {
 	for {
 		time.Sleep(3 * time.Second)
-		synced := node.synced(ctx)
-		if !synced {
-			logger.Printf("group.Synced(%s) => %t", node.group.GenesisId(), synced)
-			continue
-		}
-		sessions, err := node.store.ListInitialSessions(ctx, 64)
-		if err != nil {
-			panic(err)
-		}
+		node.handleInitialSessions(ctx)
+	}
+}
 
-		for _, s := range sessions {
-			traceId := fmt.Sprintf("SESSION:%s:SIGNER:%s:PREPARE", s.Id, string(node.id))
-			extra := uuid.Must(uuid.FromString(s.Id)).Bytes()
-			extra = append(extra, PrepareExtra...)
-			op := &common.Operation{
-				Type:  OperationTypeSignPrepare,
-				Extra: extra,
-			}
-			err := node.sendSignerTransactionToGroup(ctx, traceId, op, nil)
-			logger.Printf("node.sendSignerTransactionToGroup(%v) => %v", op, err)
-			if err != nil {
-				break
-			}
-			err = node.store.MarkSessionCommitted(ctx, s.Id)
-			logger.Printf("node.MarkSessionCommitted(%v) => %v", s, err)
-			if err != nil {
-				break
-			}
+func (node *Node) handleInitialSessions(ctx context.Context) {
+	synced := node.synced(ctx)
+	if !synced {
+		logger.Printf("group.Synced(%s) => %t", node.group.GenesisId(), synced)
+		return
+	}
+	sessions, err := node.store.ListInitialSessions(ctx, 64)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, s := range sessions {
+		traceId := fmt.Sprintf("SESSION:%s:SIGNER:%s:PREPARE", s.Id, string(node.id))
+		extra := uuid.Must(uuid.FromString(s.Id)).Bytes()
+		extra = append(extra, PrepareExtra...)
+		op := &common.Operation{
+			Type:  OperationTypeSignPrepare,
+			Extra: extra,
+		}
+		err := node.sendSignerTransactionToGroup(ctx, traceId, op, nil)
+		logger.Printf("node.sendSignerTransactionToGroup(%v) => %v", op, err)
+		if err != nil {
+			break
+		}
+		err = node.store.MarkSessionCommitted(ctx, s.Id)
+		logger.Printf("node.MarkSessionCommitted(%v) => %v", s, err)
+		if err != nil {
+			break
 		}
 	}
 }
