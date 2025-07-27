@@ -95,19 +95,6 @@ func (s *SQLite3Store) WriteInitialSystemCallWithRequest(ctx context.Context, re
 	}
 	defer common.Rollback(tx)
 
-	existed, err := s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE message_hash=?", call.MessageHash)
-	if err != nil {
-		return err
-	}
-	if existed {
-		err = s.failRequest(ctx, tx, req, nil, "")
-		if err != nil {
-			return err
-		}
-
-		return tx.Commit()
-	}
-
 	err = s.writeSystemCall(ctx, tx, call)
 	if err != nil {
 		return err
