@@ -244,6 +244,14 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	call.Public = hex.EncodeToString(user.FingerprintWithPath())
 	call.SkipPostProcess = skipPostProcess
 
+	old, err := node.store.ReadSystemCallByMessage(ctx, call.MessageHash)
+	if err != nil {
+		panic(err)
+	}
+	if old != nil {
+		logger.Printf("store.ReadSystemCallByMessage(%s) => %s", call.MessageHash, old.RequestId)
+		return node.failRequest(ctx, req, "")
+	}
 	err = node.checkUserSystemCall(ctx, tx)
 	if err != nil {
 		logger.Printf("node.checkUserSystemCall(%v) => %v", tx, err)
