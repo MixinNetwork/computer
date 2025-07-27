@@ -129,6 +129,94 @@ func TestCreateV1(t *testing.T) {
 	)
 }
 
+func TestCreateIdempotent(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	rpc1 := testRpcEndpoint
+	c := solanaApp.NewClient(rpc1)
+
+	blockhash := solana.MustHashFromBase58("2fGgNDhkTwhBH1PqS6xpgmKSCSVdYUGuZBMCSQoAMRDt")
+	owner := solana.MPK("73yoz7kK3zgh2ScD9aTJpXCrKHETi1xyEKfMTH95ugff")
+	mint := solana.MPK("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB")
+	ata := solanaApp.FindAssociatedTokenAddress(owner, mint, solana.TokenProgramID)
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{
+			solanaApp.NewCreateIdempotentInstruction(
+				owner,
+				ata,
+				owner,
+				mint,
+				system.ProgramID,
+				solana.TokenProgramID,
+			).Build(),
+		},
+		blockhash,
+		solana.TransactionPayer(owner),
+	)
+	require.Nil(err)
+
+	data, err := tx.Message.MarshalBinary()
+	require.Nil(err)
+	require.Equal(
+		"0100040659e984bf1923c33a3d247aa4f9ce780423028db7b8d0e1ef452d7b3d46dd8f9ec3f3b4b766373251dbbdde0c9be5824640f5ede70bbeda2422c57da2d9078380ce010e60afedb22717bd63192f54145a3f965a33bb82d2c7029eb2ce1e208264000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a98c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85918a97c54168e4c731e1cb11427eac8ad346847dbc1714cf592b2f748613a52fb0105060001000203040101",
+		hex.EncodeToString(data),
+	)
+
+	blockhash = solana.MustHashFromBase58("AqLCRjEWfstqpdzyvLbn3NKZeW9oXRmuaKxebBvTQdK7")
+	mint = solana.MPK("9wA7eF6kaBkPhCbwDu8gojpHSfdjTMWD8VhbmS846nN7")
+	ata = solanaApp.FindAssociatedTokenAddress(owner, mint, solana.Token2022ProgramID)
+	tx, err = solana.NewTransaction(
+		[]solana.Instruction{
+			solanaApp.NewCreateIdempotentInstruction(
+				owner,
+				ata,
+				owner,
+				mint,
+				system.ProgramID,
+				solana.Token2022ProgramID,
+			).Build(),
+		},
+		blockhash,
+		solana.TransactionPayer(owner),
+	)
+	require.Nil(err)
+
+	data, err = tx.Message.MarshalBinary()
+	require.Nil(err)
+	require.Equal(
+		"0100040659e984bf1923c33a3d247aa4f9ce780423028db7b8d0e1ef452d7b3d46dd8f9e667c6ecde852cd23d501dd593eb1b5e115b0285491058be7682fb475e797283e84bd2a383f1dfc9e5ed5982192551ab563b0057f26b74e581c04e953810119b4000000000000000000000000000000000000000000000000000000000000000006ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc8c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f859921ac46d8d98f055dc016163184fa4112145e4aa2c53b892dcc433fa713d13020105060001000203040101",
+		hex.EncodeToString(data),
+	)
+
+	builder := solana.NewTransactionBuilder()
+	builder.SetFeePayer(owner)
+	transfer := &solanaApp.TokenTransfer{
+		SolanaAsset: true,
+		AssetId:     "cb54aed4-1893-3977-b739-ec7b2e04f0c5",
+		Destination: solana.MPK("9WKkVWoWuj8RQbSbe6tsU939aJYbjsDEEPb9J7p98bcQ"),
+		Mint:        solana.MPK("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
+		Amount:      1,
+		Decimals:    6,
+	}
+	builder, err = c.AddTransferSolanaAssetInstruction(ctx, builder, transfer, owner, owner)
+	require.Nil(err)
+
+	builder.SetRecentBlockHash(solana.MustHashFromBase58("6QfjA7T1GojSuoo2NVd38iw47qBtgVN4kDsTMyp4QxFs"))
+	tx, err = builder.Build()
+	require.Nil(err)
+	data, err = tx.Message.MarshalBinary()
+	require.Nil(err)
+	require.Equal(
+		"0100050859e984bf1923c33a3d247aa4f9ce780423028db7b8d0e1ef452d7b3d46dd8f9e19d947119f4554e9755871e1bb887205dfedb6262ef40c15abce81d3530cc787c3f3b4b766373251dbbdde0c9be5824640f5ede70bbeda2422c57da2d90783807e608a165388caafffe2a5d24baa9589c2ecfc10b674b9adff936b94e90e42c5ce010e60afedb22717bd63192f54145a3f965a33bb82d2c7029eb2ce1e208264000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a98c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f859505a94f280514a58cb479c399a6cb9006c3b7337eb6b5731015687bb0f14454202070600010304050601010604020401000a0c010000000000000006",
+		hex.EncodeToString(data),
+	)
+
+	ata = solanaApp.FindAssociatedTokenAddress(transfer.Destination, transfer.Mint, solana.TokenProgramID)
+	as := solanaApp.ExtractCreatedAtasFromTransaction(ctx, tx)
+	require.Len(as, 1)
+	require.True(as[0].Equals(ata))
+}
+
 func testFROSTSign(ctx context.Context, require *require.Assertions, nodes []*Node, nonce, public string, tx *solana.Transaction) {
 	msg, err := tx.Message.MarshalBinary()
 	require.Nil(err)

@@ -8,7 +8,6 @@ import (
 
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
-	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
@@ -199,7 +198,7 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 
 	for _, transfer := range transfers {
 		if transfer.SolanaAsset {
-			b, err := c.addTransferSolanaAssetInstruction(ctx, builder, transfer, payer, mtg)
+			b, err := c.AddTransferSolanaAssetInstruction(ctx, builder, transfer, payer, mtg)
 			if err != nil {
 				return nil, err
 			}
@@ -209,19 +208,16 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 
 		mint := transfer.Mint
 		ataAddress := FindAssociatedTokenAddress(transfer.Destination, mint, solana.TokenProgramID)
-		ata, err := c.RPCGetAccount(ctx, ataAddress)
-		if err != nil {
-			return nil, err
-		}
-		if ata == nil || common.CheckTestEnvironment(ctx) {
-			builder.AddInstruction(
-				tokenAta.NewCreateInstruction(
-					payer,
-					transfer.Destination,
-					mint,
-				).Build(),
-			)
-		}
+		builder.AddInstruction(
+			NewCreateIdempotentInstruction(
+				payer,
+				ataAddress,
+				transfer.Destination,
+				mint,
+				system.ProgramID,
+				solana.TokenProgramID,
+			).Build(),
+		)
 
 		builder.AddInstruction(
 			token.NewMintToInstruction(
@@ -246,7 +242,7 @@ func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.Pu
 
 	for _, transfer := range transfers {
 		if transfer.SolanaAsset {
-			b, err := c.addTransferSolanaAssetInstruction(ctx, builder, transfer, payer, user)
+			b, err := c.AddTransferSolanaAssetInstruction(ctx, builder, transfer, payer, user)
 			if err != nil {
 				return nil, err
 			}
@@ -270,7 +266,7 @@ func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.Pu
 	return builder.Build()
 }
 
-func (c *Client) addTransferSolanaAssetInstruction(ctx context.Context, builder *solana.TransactionBuilder, transfer *TokenTransfer, payer, source solana.PublicKey) (*solana.TransactionBuilder, error) {
+func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder *solana.TransactionBuilder, transfer *TokenTransfer, payer, source solana.PublicKey) (*solana.TransactionBuilder, error) {
 	if !transfer.SolanaAsset {
 		panic(transfer.AssetId)
 	}
@@ -297,22 +293,19 @@ func (c *Client) addTransferSolanaAssetInstruction(ctx context.Context, builder 
 
 	src := FindAssociatedTokenAddress(source, transfer.Mint, tokenProgram)
 	dst := FindAssociatedTokenAddress(transfer.Destination, transfer.Mint, tokenProgram)
-	ata, err := c.RPCGetAccount(ctx, dst)
-	if err != nil {
-		return nil, err
-	}
+	builder.AddInstruction(
+		NewCreateIdempotentInstruction(
+			payer,
+			dst,
+			transfer.Destination,
+			transfer.Mint,
+			system.ProgramID,
+			tokenProgram,
+		).Build(),
+	)
 
 	switch {
 	case tokenProgram.Equals(solana.TokenProgramID):
-		if ata == nil || common.CheckTestEnvironment(ctx) {
-			builder.AddInstruction(
-				tokenAta.NewCreateInstruction(
-					payer,
-					transfer.Destination,
-					transfer.Mint,
-				).Build(),
-			)
-		}
 		builder.AddInstruction(
 			token.NewTransferCheckedInstruction(
 				transfer.Amount,
@@ -325,15 +318,6 @@ func (c *Client) addTransferSolanaAssetInstruction(ctx context.Context, builder 
 			).Build(),
 		)
 	case tokenProgram.Equals(solana.Token2022ProgramID):
-		if ata == nil || common.CheckTestEnvironment(ctx) {
-			builder.AddInstruction(
-				NewAta2022CreateInstruction(
-					payer,
-					transfer.Destination,
-					transfer.Mint,
-				).Build(),
-			)
-		}
 		builder.AddInstruction(
 			NewToken2022TransferCheckedInstruction(
 				transfer.Amount,
