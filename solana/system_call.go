@@ -236,7 +236,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	}
 
 	post, tx, err := node.getSubSystemCallFromExtra(ctx, req, data)
-	if err != nil {
+	if err != nil || post == nil {
 		return nil, err
 	}
 	post.Superior = call.RequestId
@@ -279,7 +279,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 
 func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Request, data []byte) (*store.SystemCall, *solana.Transaction, error) {
 	if len(data) < 16 {
-		return nil, nil, fmt.Errorf("invalid data length: %d", len(data))
+		return nil, nil, nil
 	}
 	id, raw := uuid.Must(uuid.FromBytes(data[:16])).String(), data[16:]
 	return node.buildSystemCallFromBytes(ctx, req, id, raw, true)

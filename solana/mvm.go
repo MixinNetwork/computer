@@ -643,8 +643,8 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 	}
 
 	call, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[96:])
-	if err != nil {
-		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v", req, err)
+	if err != nil || call == nil {
+		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v %v", req, call, err)
 		return node.failRequest(ctx, req, "")
 	}
 	err = node.VerifySubSystemCall(ctx, tx, solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry), userAddress)
