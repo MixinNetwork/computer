@@ -457,16 +457,41 @@ func (s *SQLite3Store) ListUnsignedCalls(ctx context.Context) ([]*SystemCall, er
 	return s.listSystemCallsByQuery(ctx, query, common.RequestStateFailed)
 }
 
-func (s *SQLite3Store) ListSignedCalls(ctx context.Context) (map[string]*SystemCall, error) {
+func (s *SQLite3Store) ListSignedCalls(ctx context.Context) (map[string][]*SystemCall, error) {
 	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE state=? AND signature IS NOT NULL ORDER BY created_at ASC LIMIT 100", strings.Join(systemCallCols, ","))
 	calls, err := s.listSystemCallsByQuery(ctx, query, common.RequestStatePending)
 	if err != nil {
 		return nil, err
 	}
 
-	callMap := make(map[string]*SystemCall)
+	callMap := make(map[string][]*SystemCall)
+	subMap := make(map[string]*SystemCall)
 	for _, call := range calls {
-		callMap[call.RequestId] = call
+		switch call.Type {
+		// could be sent directly
+		case CallTypeDeposit, CallTypePostProcess:
+			key := fmt.Sprintf("%s:%s", call.Type, call.RequestId)
+			callMap[key] = append(callMap[key], call)
+		// only fisrt main call could be sent at a time for the same user
+		case CallTypeMain:
+			key := fmt.Sprintf("%s:%s", call.Type, call.UserIdFromPublicPath())
+			if len(callMap[key]) == 0 {
+				callMap[key] = append(callMap[key], call)
+			}
+		// should be sent with its main call
+		case CallTypePrepare:
+			subMap[call.Superior] = call
+		}
+	}
+	for key, cs := range callMap {
+		c := cs[0]
+		if c.Type != CallTypeMain {
+			continue
+		}
+		prepare := subMap[c.Superior]
+		if prepare != nil {
+			callMap[key] = []*SystemCall{prepare, c}
+		}
 	}
 	return callMap, nil
 }
