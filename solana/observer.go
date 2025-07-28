@@ -718,7 +718,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 			panic(err)
 		}
 		if previous {
-			continue
+			return
 		}
 		// should be processed with its prepare call
 		needPrepare, err := node.store.CheckUnfinishedSubCalls(ctx, c)
@@ -726,7 +726,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 			panic(err)
 		}
 		if needPrepare && len(calls) != 2 {
-			continue
+			return
 		}
 	}
 
