@@ -873,15 +873,17 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	hash := crypto.Sha256Hash(msg).String()
 
 	if common.CheckTestEnvironment(ctx) {
-		cs, err := node.store.ListSignedCalls(ctx)
+		cm, err := node.store.ListSignedCalls(ctx)
 		if err != nil {
 			panic(err)
 		}
 		fmt.Println("===")
 		fmt.Println(signature)
 		fmt.Println(hex.EncodeToString(msg))
-		for _, c := range cs {
-			fmt.Println(c.Type, c.MessageHash)
+		for _, cs := range cm {
+			for _, c := range cs {
+				fmt.Println(c.Type, c.MessageHash)
+			}
 		}
 		test := getTestSystemConfirmCallMessage(signature)
 		if test != "" {
