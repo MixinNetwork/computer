@@ -916,24 +916,32 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall, callError error) error {
 	logger.Printf("node.processFailedCall(%s)", call.RequestId)
 	id := common.UniqueId(call.RequestId, "confirm-fail")
+	cid := common.UniqueId(id, "post-process")
+	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 	extra := []byte{FlagConfirmCallFail}
 	extra = append(extra, uuid.Must(uuid.FromString(call.RequestId)).Bytes()...)
 
-	if call.Type == store.CallTypeMain {
-		cid := common.UniqueId(id, "post-process")
-		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-		tx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
-		if tx != nil {
-			err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
-			if err != nil {
-				return err
-			}
-			data, err := tx.MarshalBinary()
-			if err != nil {
-				panic(err)
-			}
-			extra = attachSystemCall(extra, cid, data)
+	var tx *solana.Transaction
+	switch call.Type {
+	case store.CallTypeMain:
+		tx = node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
+	case store.CallTypePrepare:
+		superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+		if err != nil {
+			panic(err)
 		}
+		tx = node.CreateRefundWithdrawalTransaction(ctx, call, superior, nonce)
+	}
+	if tx != nil {
+		err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
+		if err != nil {
+			return err
+		}
+		data, err := tx.MarshalBinary()
+		if err != nil {
+			panic(err)
+		}
+		extra = attachSystemCall(extra, cid, data)
 	}
 
 	err := node.store.WriteFailedCallIfNotExist(ctx, call, callError.Error())

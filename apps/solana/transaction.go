@@ -10,6 +10,7 @@ import (
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
+	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -194,7 +195,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 	return tx, nil
 }
 
-func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {
 	builder := c.buildInitialTxWithNonceAccount(ctx, payer, nonce)
 
 	for _, transfer := range transfers {
@@ -230,6 +231,15 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 				ataAddress,
 				mtg,
 				nil,
+			).Build(),
+		)
+	}
+
+	if memoStr != "" {
+		builder.AddInstruction(
+			memo.NewMemoInstruction(
+				[]byte(memoStr),
+				payer,
 			).Build(),
 		)
 	}

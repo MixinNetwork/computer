@@ -231,7 +231,12 @@ func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.Syste
 }
 
 func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, flag byte, call *store.SystemCall, data []byte) (*store.SystemCall, error) {
-	if call.Type != store.CallTypeMain || len(data) == 0 {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	switch call.Type {
+	case store.CallTypeMain, store.CallTypePrepare:
+	default:
 		return nil, nil
 	}
 
@@ -239,7 +244,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	if err != nil {
 		return nil, err
 	}
-	post.Superior = call.RequestId
+	post.Superior = call.Superior
 	post.Type = store.CallTypePostProcess
 	post.Public = call.Public
 	post.State = common.RequestStatePending
