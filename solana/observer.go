@@ -676,78 +676,10 @@ func (node *Node) handleSignedCalls(ctx context.Context) error {
 		return nil
 	}
 
-	callMap, err := node.store.ListSignedCalls(ctx)
+	callSequence, err := node.store.ListSignedCalls(ctx)
 	if err != nil {
 		return err
 	}
-	callSequence := make(map[string][]*store.SystemCall)
-	for _, call := range callMap {
-		switch call.Type {
-		case store.CallTypeDeposit, store.CallTypePostProcess:
-			key := fmt.Sprintf("%s:%s", call.Type, call.RequestId)
-			callSequence[key] = append(callSequence[key], call)
-		case store.CallTypeMain:
-			// should wait withdrawals getting confirmed
-			unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			if unconfirmed {
-				continue
-			}
-			// should be processed with its prepare call together unless prepare call not exists
-			pending, err := node.store.CheckUnfinishedSubCalls(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			if pending {
-				continue
-			}
-			// should be processed after previous main calls being confirmed
-			previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			if previous {
-				continue
-			}
-
-			key := fmt.Sprintf("%s:%s", store.CallTypeMain, call.UserIdFromPublicPath())
-			if len(callSequence[key]) > 0 {
-				continue
-			}
-			callSequence[key] = append(callSequence[key], call)
-		case store.CallTypePrepare:
-			main := callMap[call.Superior]
-			if main == nil {
-				continue
-			}
-			// should wait withdrawals of its main call getting confirmed
-			unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, main)
-			if err != nil {
-				panic(err)
-			}
-			if unconfirmed {
-				continue
-			}
-			// should be processed after previous main calls being confirmed
-			previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			if previous {
-				continue
-			}
-
-			key := fmt.Sprintf("%s:%s", store.CallTypeMain, main.UserIdFromPublicPath())
-			if len(callSequence[key]) > 0 {
-				continue
-			}
-			callSequence[key] = append(callSequence[key], call)
-			callSequence[key] = append(callSequence[key], main)
-		}
-	}
-
 	var wg sync.WaitGroup
 	for key, calls := range callSequence {
 		wg.Add(1)
@@ -768,24 +700,38 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 		panic(fmt.Errorf("invalid call sequence length: %s", strings.Join(ids, ",")))
 	}
 
+	for _, c := range calls {
+		if c.Type != store.CallTypeMain {
+			continue
+		}
+		// should wait withdrawals getting confirmed
+		unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, c)
+		if err != nil {
+			panic(err)
+		}
+		if unconfirmed {
+			return
+		}
+		// should be processed after previous main calls from the same user being confirmed
+		previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, c)
+		if err != nil {
+			panic(err)
+		}
+		if previous {
+			return
+		}
+		// should be processed with its prepare call
+		needPrepare, err := node.store.CheckUnfinishedSubCalls(ctx, c)
+		if err != nil {
+			panic(err)
+		}
+		if needPrepare && len(calls) != 2 {
+			return
+		}
+	}
+
 	if len(calls) == 1 {
 		call := calls[0]
-
-		if call.Type == store.CallTypeMain {
-			pending, err := node.store.CheckUnfinishedSubCalls(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			unconfirmed, err := node.store.CheckUnconfirmedWithdrawals(ctx, call)
-			if err != nil {
-				panic(err)
-			}
-			// should be processed with its prepare call together or wait withdrawals getting confirmed
-			if pending || unconfirmed {
-				return
-			}
-		}
-
 		tx, meta, err := node.handleSignedCall(ctx, call)
 		if err != nil {
 			err = node.processFailedCall(ctx, call, err)

@@ -643,8 +643,8 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 	}
 
 	call, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[96:])
-	if err != nil {
-		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v", req, err)
+	if err != nil || call == nil {
+		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v %v", req, call, err)
 		return node.failRequest(ctx, req, "")
 	}
 	err = node.VerifySubSystemCall(ctx, tx, solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry), userAddress)
@@ -873,15 +873,17 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 	hash := crypto.Sha256Hash(msg).String()
 
 	if common.CheckTestEnvironment(ctx) {
-		cs, err := node.store.ListSignedCalls(ctx)
+		cm, err := node.store.ListSignedCalls(ctx)
 		if err != nil {
 			panic(err)
 		}
 		fmt.Println("===")
 		fmt.Println(signature)
 		fmt.Println(hex.EncodeToString(msg))
-		for _, c := range cs {
-			fmt.Println(c.Type, c.MessageHash)
+		for _, cs := range cm {
+			for _, c := range cs {
+				fmt.Println(c.Type, c.MessageHash)
+			}
 		}
 		test := getTestSystemConfirmCallMessage(signature)
 		if test != "" {
