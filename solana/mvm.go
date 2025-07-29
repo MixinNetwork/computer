@@ -550,7 +550,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		return nil, ""
 	case FlagConfirmCallFail:
 		callId := uuid.Must(uuid.FromBytes(extra[:16])).String()
-		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, common.RequestStatePending)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
 		if err != nil {
 			panic(err)
@@ -791,6 +791,12 @@ func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, 
 }
 
 func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall) ([]*mtg.Transaction, string) {
+	switch call.State {
+	case common.RequestStatePending, common.RequestStateFailed:
+	default:
+		return node.failRequest(ctx, req, "")
+	}
+
 	extra := req.ExtraBytes()
 	flag, extra := extra[0], extra[1:]
 
@@ -803,6 +809,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	}
 
 	var outputs []*store.UserOutput
+	var mix *bot.MixAddress
 	switch call.Type {
 	case store.CallTypeMain, store.CallTypePrepare:
 		main := call
@@ -813,6 +820,15 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 				panic(err)
 			}
 			main = c
+
+			user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
+			if err != nil {
+				panic(err)
+			}
+			mix, err = bot.NewMixAddressFromString(user.MixAddress)
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
@@ -842,7 +858,25 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 		}
 	}
 
-	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs)
+	// refund external assets when prepare call failed
+	// solana assets would be transfered to user when mtg receives deposit
+	var txs []*mtg.Transaction
+	var compaction string
+	if call.Type == store.CallTypePrepare && mix != nil {
+		as := node.GetSystemCallRelatedAsset(ctx, outputs)
+		var assets []*ReferencedTxAsset
+		for _, a := range as {
+			if a.Solana {
+				continue
+			}
+			assets = append(assets, a)
+		}
+		if len(assets) > 0 {
+			txs, compaction = node.buildRefundTxs(ctx, req, call.RequestId, as, mix.Members(), int(mix.Threshold))
+		}
+	}
+
+	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs, txs, compaction)
 	if err != nil {
 		panic(err)
 	}
