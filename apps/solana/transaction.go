@@ -471,6 +471,26 @@ func ExtractMintsFromTransaction(tx *solana.Transaction) []string {
 	return assets
 }
 
+func ExtractMemoFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, payer solana.PublicKey) string {
+	if meta.Err != nil {
+		panic(fmt.Sprint(meta.Err))
+	}
+
+	for _, ins := range tx.Message.Instructions {
+		accounts, err := ins.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			panic(err)
+		}
+		if memo, err := DecodeMemo(accounts, ins.Data); err == nil {
+			if memo.GetSigner().PublicKey.String() == payer.String() {
+				return string(memo.Message)
+			}
+		}
+	}
+
+	return ""
+}
+
 func GetSignatureIndexOfAccount(tx solana.Transaction, publicKey solana.PublicKey) (int, error) {
 	index, err := tx.GetAccountIndex(publicKey)
 	if err == nil {

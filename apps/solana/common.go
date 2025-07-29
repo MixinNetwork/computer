@@ -15,6 +15,7 @@ import (
 	"github.com/blocto/solana-go-sdk/types"
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 )
@@ -381,6 +382,18 @@ func DecodeTokenMintTo(accounts solana.AccountMetaSlice, data []byte) (*token.Mi
 		return mintTo, true
 	}
 	return nil, false
+}
+
+func DecodeMemo(accounts solana.AccountMetaSlice, data []byte) (*memo.Create, error) {
+	ix, err := system.DecodeInstruction(accounts, data)
+	if err != nil {
+		return nil, err
+	}
+	memo, ok := ix.Impl.(*memo.Create)
+	if ok {
+		return memo, nil
+	}
+	return nil, fmt.Errorf("invalid memo instruction")
 }
 
 func DecodeNonceAdvance(accounts solana.AccountMetaSlice, data []byte) (*system.AdvanceNonceAccount, error) {

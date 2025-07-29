@@ -697,6 +697,8 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 	}
 
 	var ts []*solanaApp.Transfer
+	var tx *solana.Transaction
+	var meta *rpc.TransactionMeta
 	if common.CheckTestEnvironment(ctx) {
 		ts = append(ts, &solanaApp.Transfer{
 			AssetId:  out.AssetId,
@@ -712,10 +714,11 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if err != nil {
 			panic(err)
 		}
-		tx, err := rpcTx.Transaction.GetTransaction()
+		tx, err = rpcTx.Transaction.GetTransaction()
 		if err != nil {
 			panic(err)
 		}
+		meta = rpcTx.Meta
 		err = node.processTransactionWithAddressLookups(ctx, tx)
 		if err != nil {
 			panic(err)
@@ -741,7 +744,25 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if err != nil {
 			panic(err)
 		} else if user == nil {
-			continue
+			memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
+			if memo == "" {
+				continue
+			}
+			call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
+			if err != nil {
+				panic(err)
+			}
+			if call == nil || call.Type != store.CallTypePrepare {
+				continue
+			}
+			superir, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStateFailed)
+			if err != nil {
+				panic(err)
+			}
+			user, err = node.store.ReadUser(ctx, superir.UserIdFromPublicPath())
+			if err != nil {
+				panic(err)
+			}
 		}
 		mix, err := bot.NewMixAddressFromString(user.MixAddress)
 		if err != nil {
