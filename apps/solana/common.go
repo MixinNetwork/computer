@@ -385,7 +385,7 @@ func DecodeTokenMintTo(accounts solana.AccountMetaSlice, data []byte) (*token.Mi
 }
 
 func DecodeMemo(accounts solana.AccountMetaSlice, data []byte) (*memo.Create, error) {
-	ix, err := system.DecodeInstruction(accounts, data)
+	ix, err := memo.DecodeInstruction(accounts, data)
 	if err != nil {
 		return nil, err
 	}

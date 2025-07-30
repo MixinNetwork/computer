@@ -92,6 +92,23 @@ func TestGetNonceAccountHash(t *testing.T) {
 	require.Equal(testNonceAccountHash, hash.String())
 }
 
+func TestGetTxMemo(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	rpc := testRpcEndpoint
+	if er := os.Getenv("SOLANARPC"); er != "" {
+		rpc = er
+	}
+	rpcClient := solanaApp.NewClient(rpc)
+
+	rpcTx, err := rpcClient.RPCGetTransaction(ctx, "sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
+	require.Nil(err)
+	tx, err := rpcTx.Transaction.GetTransaction()
+	require.Nil(err)
+	memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, rpcTx.Meta, solana.MPK("5ECPyQVa9gZuig8guSmofttMfYjCMRxqa6nCciFTrsTB"))
+	require.Equal("74d03590-1a28-3666-9225-f32b2c97ad51", memo)
+}
+
 func TestCreateV1(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()

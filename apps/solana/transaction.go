@@ -476,7 +476,15 @@ func ExtractMemoFromTransaction(ctx context.Context, tx *solana.Transaction, met
 		panic(fmt.Sprint(meta.Err))
 	}
 
-	for _, ins := range tx.Message.Instructions {
+	msg := tx.Message
+	for _, ins := range msg.Instructions {
+		programKey, err := msg.Program(ins.ProgramIDIndex)
+		if err != nil {
+			panic(err)
+		}
+		if !programKey.Equals(solana.MemoProgramID) {
+			continue
+		}
 		accounts, err := ins.ResolveInstructionAccounts(&tx.Message)
 		if err != nil {
 			panic(err)
