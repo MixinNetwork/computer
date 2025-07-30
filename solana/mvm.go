@@ -895,7 +895,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			assets = append(assets, a)
 		}
 		if len(assets) > 0 {
-			txs, compaction = node.buildRefundTxs(ctx, req, call.RequestId, as, mix.Members(), int(mix.Threshold))
+			txs, compaction = node.buildRefundTxs(ctx, req, call.RequestId, assets, mix.Members(), int(mix.Threshold))
 		}
 	}
 
