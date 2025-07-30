@@ -740,15 +740,17 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 			continue
 		}
 		user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)
-		logger.Verbosef("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
+		logger.Printf("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
 		if err != nil {
 			panic(err)
 		} else if user == nil {
 			memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
+			logger.Printf("solana.ExtractMemoFromTransaction(%s) => %s", tx.Signatures[0].String(), memo)
 			if memo == "" {
 				continue
 			}
 			call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
+			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
 			if err != nil {
 				panic(err)
 			}
