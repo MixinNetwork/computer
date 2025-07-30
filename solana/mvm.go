@@ -837,8 +837,8 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	case store.CallTypeMain, store.CallTypePrepare:
 		main := call
 		if call.Type == store.CallTypePrepare {
-			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStatePending)
-			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, call, err)
+			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, c, err)
 			if err != nil || c == nil {
 				panic(err)
 			}
@@ -854,7 +854,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
+		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
 		if err != nil {
 			panic(err)
 		}
