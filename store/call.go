@@ -357,7 +357,7 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		}
 	}
 
-	err = s.finishRequest(ctx, tx, req, nil, "")
+	err = s.finishRequest(ctx, tx, req, txs, compaction)
 	if err != nil {
 		return err
 	}
