@@ -543,11 +543,21 @@ func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare
 		assets[a.Address] = a
 	}
 
+	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
+	if err != nil {
+		panic(err)
+	}
 	var transfers []*solanaApp.TokenTransfer
 	for _, asset := range assets {
 		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
 		if !amount.BigInt().IsUint64() {
 			continue
+		}
+		if asset.AssetId == solanaApp.SolanaChainBase {
+			if amount.Cmp(decimal.NewFromUint64(rent)) < 1 {
+				logger.Printf("skip SOL transfer in refund-withdrawal: %v", asset)
+				continue
+			}
 		}
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
