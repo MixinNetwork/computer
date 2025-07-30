@@ -954,7 +954,15 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 }
 
 func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, rpcTx *rpc.GetTransactionResult, signature string) ([]*mtg.Transaction, string) {
-	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
+	main := call
+	if call.Superior != call.RequestId {
+		c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+		if err != nil {
+			panic(err)
+		}
+		main = c
+	}
+	user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
 	}
