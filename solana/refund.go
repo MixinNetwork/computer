@@ -45,10 +45,14 @@ func (node *Node) processFailedPrepareCall(ctx context.Context, call *store.Syst
 }
 
 func (node *Node) refundFailedPrepareCalls(ctx context.Context) error {
-	// FIXME dev
 	failedPrepareIds := []string{
-		"e259dd59-7b40-38f5-88f2-e98ff8a9160e",
-		"74d03590-1a28-3666-9225-f32b2c97ad51",
+		"ccbb4fc6-737c-3428-a7b0-78d1de6ccbdd",
+		"933b85e2-2863-3253-99b7-2b5e6a512d32",
+		"eca70deb-8822-372e-a63b-f84a7cbaa129",
+		"a83cee37-f113-31e8-9c95-2e3490263c87",
+		"f9d47737-ca6e-3038-9307-b28c7ce59df7",
+		"5dea077c-ec74-3d92-a6f7-6fafc5f93697",
+		"39891351-d37f-322c-9fd8-b049cc629fe2",
 	}
 
 	key := "REFUND:FAILED:PREPARE:" + strings.Join(failedPrepareIds, ",")
