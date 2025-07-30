@@ -903,7 +903,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	if err != nil {
 		panic(err)
 	}
-	return nil, ""
+	return txs, compaction
 }
 
 func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *rpc.GetTransactionResult, error) {
