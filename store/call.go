@@ -556,3 +556,8 @@ func (s *SQLite3Store) writeSystemCall(ctx context.Context, tx *sql.Tx, call *Sy
 	}
 	return nil
 }
+
+func (s *SQLite3Store) ListFailedPrepareCalls(ctx context.Context) ([]*SystemCall, error) {
+	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE state=? AND call_type=? ORDER BY created_at ASC", strings.Join(systemCallCols, ","))
+	return s.listSystemCallsByQuery(ctx, query, common.RequestStateFailed, CallTypePrepare)
+}

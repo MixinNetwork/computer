@@ -43,6 +43,11 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 		panic(err)
 	}
 
+	err = node.refundFailedPrepareCalls(ctx)
+	if err != nil {
+		panic(err)
+	}
+
 	err = node.checkNonceAccounts(ctx)
 	if err != nil {
 		panic(err)
