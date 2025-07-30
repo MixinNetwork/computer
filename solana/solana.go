@@ -820,7 +820,7 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 				continue
 			}
 			return fmt.Errorf("invalid token program instruction: %d", index)
-		case tokenAta.ProgramID, solana.ComputeBudget:
+		case tokenAta.ProgramID, solana.ComputeBudget, solana.MemoProgramID:
 		default:
 			return fmt.Errorf("invalid program key: %s", programKey.String())
 		}
