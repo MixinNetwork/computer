@@ -434,7 +434,7 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 				case solanaApp.SolanaEmptyAddress, solanaApp.WrappedSolanaAddress:
 					continue
 				}
-				panic(fmt.Errorf("invalid change for system call: %s %s %v", tx.Signatures[0].String(), call.RequestId, change))
+				panic(fmt.Errorf("invalid change for system call: %s %s %s %v", tx.Signatures[0].String(), call.RequestId, address, change))
 			}
 			da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
 			if err != nil {
