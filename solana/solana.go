@@ -428,14 +428,11 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 				assets[address].Amount = assets[address].Amount.Add(change.Amount)
 				continue
 			}
-
+			// skip assets with a decrease or no change in amount
 			if !change.Amount.IsPositive() {
-				switch address {
-				case solanaApp.SolanaEmptyAddress, solanaApp.WrappedSolanaAddress:
-					continue
-				}
-				panic(fmt.Errorf("invalid change for system call: %s %s %s %v", tx.Signatures[0].String(), call.RequestId, address, change))
+				continue
 			}
+
 			da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
 			if err != nil {
 				panic(fmt.Errorf("store.ReadDeployedAssetByAddress(%s) => %v %v", address, da, err))
