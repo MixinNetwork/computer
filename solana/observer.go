@@ -1026,7 +1026,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 }
 
 func (node *Node) getAssetBalanceAt(ctx context.Context, sequence uint64, assetId string) decimal.Decimal {
-	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, sequence, mtg.SafeUtxoStateUnspent, 0)
 	total := decimal.NewFromInt(0)
 	for _, o := range os {
 		total = total.Add(o.Amount)
