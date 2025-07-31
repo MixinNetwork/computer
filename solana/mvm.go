@@ -558,7 +558,7 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		return nil, ""
 	case FlagConfirmCallFail:
 		callId := uuid.Must(uuid.FromBytes(extra[:16])).String()
-		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, common.RequestStatePending)
+		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
 		if err != nil {
 			panic(err)
@@ -705,6 +705,8 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 	}
 
 	var ts []*solanaApp.Transfer
+	var tx *solana.Transaction
+	var meta *rpc.TransactionMeta
 	if common.CheckTestEnvironment(ctx) {
 		ts = append(ts, &solanaApp.Transfer{
 			AssetId:  out.AssetId,
@@ -720,10 +722,11 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if err != nil {
 			panic(err)
 		}
-		tx, err := rpcTx.Transaction.GetTransaction()
+		tx, err = rpcTx.Transaction.GetTransaction()
 		if err != nil {
 			panic(err)
 		}
+		meta = rpcTx.Meta
 		err = node.processTransactionWithAddressLookups(ctx, tx)
 		if err != nil {
 			panic(err)
@@ -745,11 +748,31 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 			continue
 		}
 		user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)
-		logger.Verbosef("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
+		logger.Printf("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
 		if err != nil {
 			panic(err)
 		} else if user == nil {
-			continue
+			memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
+			logger.Printf("solana.ExtractMemoFromTransaction(%s) => %s", tx.Signatures[0].String(), memo)
+			if memo == "" {
+				continue
+			}
+			call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
+			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
+			if err != nil {
+				panic(err)
+			}
+			if call == nil || call.Type != store.CallTypePrepare {
+				continue
+			}
+			superir, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStateFailed)
+			if err != nil {
+				panic(err)
+			}
+			user, err = node.store.ReadUser(ctx, superir.UserIdFromPublicPath())
+			if err != nil {
+				panic(err)
+			}
 		}
 		mix, err := bot.NewMixAddressFromString(user.MixAddress)
 		if err != nil {
@@ -799,6 +822,12 @@ func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, 
 }
 
 func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall) ([]*mtg.Transaction, string) {
+	switch call.State {
+	case common.RequestStatePending, common.RequestStateFailed:
+	default:
+		return node.failRequest(ctx, req, "")
+	}
+
 	extra := req.ExtraBytes()
 	flag, extra := extra[0], extra[1:]
 
@@ -811,19 +840,29 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	}
 
 	var outputs []*store.UserOutput
+	var mix *bot.MixAddress
 	switch call.Type {
 	case store.CallTypeMain, store.CallTypePrepare:
 		main := call
 		if call.Type == store.CallTypePrepare {
-			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStatePending)
-			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, call, err)
+			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, c, err)
 			if err != nil || c == nil {
 				panic(err)
 			}
 			main = c
+
+			user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
+			if err != nil {
+				panic(err)
+			}
+			mix, err = bot.NewMixAddressFromString(user.MixAddress)
+			if err != nil {
+				panic(err)
+			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
+		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
 		if err != nil {
 			panic(err)
 		}
@@ -850,11 +889,29 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 		}
 	}
 
-	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs)
+	// refund external assets when prepare call failed
+	// solana assets would be transfered to user when mtg receives deposit
+	var txs []*mtg.Transaction
+	var compaction string
+	if call.Type == store.CallTypePrepare && mix != nil {
+		as := node.GetSystemCallRelatedAsset(ctx, outputs)
+		var assets []*ReferencedTxAsset
+		for _, a := range as {
+			if a.Solana {
+				continue
+			}
+			assets = append(assets, a)
+		}
+		if len(assets) > 0 {
+			txs, compaction = node.buildRefundTxs(ctx, req, call.RequestId, assets, mix.Members(), int(mix.Threshold))
+		}
+	}
+
+	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs, txs, compaction)
 	if err != nil {
 		panic(err)
 	}
-	return nil, ""
+	return txs, compaction
 }
 
 func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *rpc.GetTransactionResult, error) {
@@ -907,7 +964,15 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 }
 
 func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, rpcTx *rpc.GetTransactionResult, signature string) ([]*mtg.Transaction, string) {
-	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
+	main := call
+	if call.Superior != call.RequestId {
+		c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+		if err != nil {
+			panic(err)
+		}
+		main = c
+	}
+	user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
 	}

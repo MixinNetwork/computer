@@ -9,6 +9,7 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
+	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -193,7 +194,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 	return tx, nil
 }
 
-func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {
 	builder := c.buildInitialTxWithNonceAccount(ctx, payer, nonce)
 
 	for _, transfer := range transfers {
@@ -226,6 +227,15 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 				ataAddress,
 				mtg,
 				nil,
+			).Build(),
+		)
+	}
+
+	if memoStr != "" {
+		builder.AddInstruction(
+			memo.NewMemoInstruction(
+				[]byte(memoStr),
+				payer,
 			).Build(),
 		)
 	}
@@ -443,6 +453,34 @@ func ExtractMintsFromTransaction(tx *solana.Transaction) []string {
 		}
 	}
 	return assets
+}
+
+func ExtractMemoFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, payer solana.PublicKey) string {
+	if meta.Err != nil {
+		panic(fmt.Sprint(meta.Err))
+	}
+
+	msg := tx.Message
+	for _, ins := range msg.Instructions {
+		programKey, err := msg.Program(ins.ProgramIDIndex)
+		if err != nil {
+			panic(err)
+		}
+		if !programKey.Equals(solana.MemoProgramID) {
+			continue
+		}
+		accounts, err := ins.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			panic(err)
+		}
+		if memo, err := DecodeMemo(accounts, ins.Data); err == nil {
+			if memo.GetSigner().PublicKey.String() == payer.String() {
+				return string(memo.Message)
+			}
+		}
+	}
+
+	return ""
 }
 
 func GetSignatureIndexOfAccount(tx solana.Transaction, publicKey solana.PublicKey) (int, error) {

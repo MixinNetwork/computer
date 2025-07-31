@@ -292,7 +292,7 @@ func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Conte
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Request, call, sub *SystemCall, session *Session, os []*UserOutput) error {
+func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Request, call, sub *SystemCall, session *Session, os []*UserOutput, txs []*mtg.Transaction, compaction string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -303,7 +303,7 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 	defer common.Rollback(tx)
 
 	query := "UPDATE system_calls SET state=?, updated_at=? WHERE id=? AND state=?"
-	err = s.execOne(ctx, tx, query, common.RequestStateFailed, req.CreatedAt, call.RequestId, common.RequestStatePending)
+	_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, req.CreatedAt, call.RequestId, common.RequestStatePending)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
@@ -326,26 +326,38 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 	}
 
 	if sub != nil {
-		err = s.writeSystemCall(ctx, tx, sub)
+		existed, err := s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE id=?", sub.RequestId)
 		if err != nil {
 			return err
 		}
+		if !existed {
+			err = s.writeSystemCall(ctx, tx, sub)
+			if err != nil {
+				return err
+			}
+		}
 
-		err = s.writeSession(ctx, tx, session)
+		existed, err = s.checkExistence(ctx, tx, "SELECT session_id FROM sessions WHERE session_id=?", session.Id)
 		if err != nil {
 			return err
+		}
+		if !existed {
+			err = s.writeSession(ctx, tx, session)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	for _, o := range os {
 		query := "UPDATE user_outputs SET state=?, updated_at=? WHERE output_id=? AND state=?"
-		err = s.execOne(ctx, tx, query, common.RequestStateDone, req.CreatedAt, o.OutputId, common.RequestStatePending)
+		_, err = tx.ExecContext(ctx, query, common.RequestStateDone, req.CreatedAt, o.OutputId, common.RequestStatePending)
 		if err != nil {
 			return fmt.Errorf("SQLite3Store UPDATE user_outputs %v", err)
 		}
 	}
 
-	err = s.finishRequest(ctx, tx, req, nil, "")
+	err = s.finishRequest(ctx, tx, req, txs, compaction)
 	if err != nil {
 		return err
 	}
@@ -568,4 +580,9 @@ func (s *SQLite3Store) writeSystemCall(ctx context.Context, tx *sql.Tx, call *Sy
 		return fmt.Errorf("INSERT system_calls %v", err)
 	}
 	return nil
+}
+
+func (s *SQLite3Store) ListFailedPrepareCalls(ctx context.Context) ([]*SystemCall, error) {
+	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE state=? AND call_type=? ORDER BY created_at ASC", strings.Join(systemCallCols, ","))
+	return s.listSystemCallsByQuery(ctx, query, common.RequestStateFailed, CallTypePrepare)
 }

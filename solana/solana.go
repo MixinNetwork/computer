@@ -400,7 +400,7 @@ func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.Syst
 	}
 
 	node.sortSolanaTransfers(transfers)
-	return node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), mtg, nonce.Account(), transfers)
+	return node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), mtg, nonce.Account(), transfers, "")
 }
 
 func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, tx *solana.Transaction, meta *rpc.TransactionMeta) *solana.Transaction {
@@ -470,6 +470,7 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	for _, asset := range assets {
 		dust := decimal.RequireFromString("0.00000001")
 		if asset.Amount.Cmp(dust) < 0 {
+			logger.Printf("skip referenced asset in post-process: %v", asset)
 			continue
 		}
 		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
@@ -511,6 +512,69 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	}
 
 	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount) *solana.Transaction {
+	withdrawals := call.GetWithdrawalIds()
+	// the failure of prepare call means that only Solana assets are withdrawn
+	// the mint of external assets is failed so no need to burn
+	if len(withdrawals) == 0 {
+		return nil
+	}
+
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, 0)
+	if err != nil {
+		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+	}
+	ras := node.GetSystemCallRelatedAsset(ctx, os)
+	assets := make(map[string]*ReferencedTxAsset)
+	for _, a := range ras {
+		if !a.Solana {
+			continue
+		}
+		if assets[a.Address] != nil {
+			assets[a.Address].Amount = assets[a.Address].Amount.Add(a.Amount)
+			continue
+		}
+		assets[a.Address] = a
+	}
+
+	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
+	if err != nil {
+		panic(err)
+	}
+	var transfers []*solanaApp.TokenTransfer
+	for _, asset := range assets {
+		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
+		if !amount.BigInt().IsUint64() {
+			continue
+		}
+		if asset.AssetId == solanaApp.SolanaChainBase {
+			if amount.Cmp(decimal.NewFromUint64(rent)) < 1 {
+				logger.Printf("skip SOL transfer in refund-withdrawal: %v", asset)
+				continue
+			}
+		}
+		transfers = append(transfers, &solanaApp.TokenTransfer{
+			SolanaAsset: asset.Solana,
+			AssetId:     asset.AssetId,
+			ChainId:     asset.ChainId,
+			Mint:        solana.MPK(asset.Address),
+			Destination: solana.MPK(node.conf.SolanaDepositEntry),
+			Amount:      amount.BigInt().Uint64(),
+			Decimals:    uint8(asset.Decimal),
+		})
+	}
+	if len(transfers) == 0 {
+		return nil
+	}
+
+	node.sortSolanaTransfers(transfers)
+	tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
 	if err != nil {
 		panic(err)
 	}
@@ -766,7 +830,7 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 				continue
 			}
 			return fmt.Errorf("invalid token program instruction: %d", index)
-		case tokenAta.ProgramID, solana.ComputeBudget:
+		case tokenAta.ProgramID, solana.ComputeBudget, solana.MemoProgramID:
 		default:
 			return fmt.Errorf("invalid program key: %s", programKey.String())
 		}
@@ -852,6 +916,7 @@ func (node *Node) checkTransfers(ctx context.Context, transfers []*solanaApp.Tok
 			logger.Printf("solana.RPCCheckNFT(%s) => %v", t.Mint.String(), err)
 			return nil, err
 		} else if isNFT {
+			logger.Printf("skip NFT: %s", t.Mint.String())
 			continue
 		}
 		ts = append(ts, t)

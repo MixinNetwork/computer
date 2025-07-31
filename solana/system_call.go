@@ -231,7 +231,12 @@ func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.Syste
 }
 
 func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, flag byte, call *store.SystemCall, data []byte) (*store.SystemCall, error) {
-	if call.Type != store.CallTypeMain || len(data) == 0 {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	switch call.Type {
+	case store.CallTypeMain, store.CallTypePrepare:
+	default:
 		return nil, nil
 	}
 
@@ -239,17 +244,25 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	if err != nil || post == nil {
 		return nil, err
 	}
-	post.Superior = call.RequestId
+	post.Superior = call.Superior
 	post.Type = store.CallTypePostProcess
 	post.Public = call.Public
 	post.State = common.RequestStatePending
 
-	user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
+	main := call
+	if call.Type == store.CallTypePrepare {
+		main, err = node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, main, err)
+		if err != nil || main == nil {
+			panic(err)
+		}
+	}
+	user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
 	if err != nil {
 		panic(err)
 	}
 	if user == nil {
-		return nil, fmt.Errorf("store.ReadUser(%s) => nil", call.UserIdFromPublicPath())
+		return nil, fmt.Errorf("store.ReadUser(%s) => nil", main.UserIdFromPublicPath())
 	}
 	mtgDeposit := solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
 	err = node.VerifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress))
@@ -258,16 +271,16 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
 	}
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
 
 	switch flag {
 	case FlagConfirmCallSuccess:
-		err = node.comparePostCallWithSolanaTx(ctx, ras, tx, call.Hash.String, user.ChainAddress)
-		logger.Printf("node.comparePostCallWithSolanaTx(%s %s) => %v", call.Hash.String, user.ChainAddress, err)
+		err = node.comparePostCallWithSolanaTx(ctx, ras, tx, main.Hash.String, user.ChainAddress)
+		logger.Printf("node.comparePostCallWithSolanaTx(%s %s) => %v", main.Hash.String, user.ChainAddress, err)
 		if err != nil {
 			return nil, err
 		}
