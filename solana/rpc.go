@@ -17,6 +17,7 @@ import (
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/shopspring/decimal"
 )
 
 func (node *Node) checkCreatedAtaUntilSufficient(ctx context.Context, tx *solana.Transaction) error {
@@ -251,6 +252,15 @@ func (node *Node) RPCCheckNFT(ctx context.Context, account string) (bool, error)
 		return false, fmt.Errorf("solana.NewBinDecoder() => %v", err)
 	}
 	return tm.Supply == 1 && tm.Decimals == 0, nil
+}
+
+func (node *Node) RPCMintSupply(ctx context.Context, account string) decimal.Decimal {
+	mint, err := node.solana.GetMint(ctx, solana.MPK(account))
+	if err != nil || mint == nil {
+		panic(fmt.Errorf("solana.GetMint(%s) => %v %v", account, mint, err))
+	}
+	supply := decimal.New(int64(mint.Supply), -int32(mint.Decimals))
+	return supply
 }
 
 func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataSize uint64) (uint64, error) {

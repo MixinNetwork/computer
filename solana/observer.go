@@ -1016,7 +1016,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 			panic(err)
 		}
 		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		balance := node.getAssetBalanceAt(ctx, math.MaxInt64, da.AssetId)
+		balance := node.getMtgAssetBalance(ctx, da.AssetId)
 		if balance.Cmp(amount) < 0 {
 			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, da.AssetId, amount.String(), balance.String())
 			return false
@@ -1025,8 +1025,8 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 	return true
 }
 
-func (node *Node) getAssetBalanceAt(ctx context.Context, sequence uint64, assetId string) decimal.Decimal {
-	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, sequence, mtg.SafeUtxoStateUnspent, 0)
+func (node *Node) getMtgAssetBalance(ctx context.Context, assetId string) decimal.Decimal {
+	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, math.MaxInt64, mtg.SafeUtxoStateUnspent, 0)
 	total := decimal.NewFromInt(0)
 	for _, o := range os {
 		total = total.Add(o.Amount)

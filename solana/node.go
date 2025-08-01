@@ -3,7 +3,6 @@ package solana
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -18,8 +17,6 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/fox-one/mixin-sdk-go/v2"
-	"github.com/gagliardetto/solana-go"
-	"github.com/shopspring/decimal"
 )
 
 type Node struct {
@@ -83,17 +80,18 @@ func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 			panic(err)
 		}
 		for _, a := range as {
-			mint, err := node.solana.GetMint(ctx, solana.MPK(a.Address))
-			if err != nil || mint == nil {
-				panic(fmt.Errorf("solana.GetMint(%s) => %v %v", a.Address, mint, err))
-			}
-			supply := decimal.New(int64(mint.Supply), -int32(mint.Decimals))
-			balance := node.getAssetBalanceAt(ctx, math.MaxInt64, a.AssetId)
-			if balance.Cmp(supply) < 0 {
-				panic(fmt.Errorf("invalid balance of %s %s: %s %s", a.AssetId, a.Address, balance, supply))
-			}
+			node.checkMintBalance(ctx, a)
+			time.Sleep(100 * time.Millisecond)
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+func (node *Node) checkMintBalance(ctx context.Context, a *solanaApp.DeployedAsset) {
+	supply := node.RPCMintSupply(ctx, a.Address)
+	balance := node.getMtgAssetBalance(ctx, a.AssetId)
+	if balance.Cmp(supply) < 0 {
+		panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s", a.AssetId, a.Address, balance, supply))
 	}
 }
 
