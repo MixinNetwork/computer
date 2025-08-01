@@ -83,7 +83,7 @@ func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 			node.checkMintBalance(ctx, a)
 			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Minute)
 	}
 }
 
