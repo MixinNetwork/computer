@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/fox-one/mixin-sdk-go/v2"
+	"github.com/gagliardetto/solana-go"
+	"github.com/shopspring/decimal"
 )
 
 type Node struct {
@@ -68,8 +71,30 @@ func (node *Node) Boot(ctx context.Context, version string) {
 	}
 	go node.bootObserver(ctx, version)
 	go node.bootSigner(ctx)
+	go node.mtgBalanceCheckLoop(ctx)
 
 	logger.Printf("node.Boot(%s, %d)", node.id, node.Index())
+}
+
+func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
+	for {
+		as, err := node.store.ListDeployedAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+		for _, a := range as {
+			mint, err := node.solana.GetMint(ctx, solana.MPK(a.Address))
+			if err != nil || mint == nil {
+				panic(fmt.Errorf("solana.GetMint(%s) => %v %v", a.Address, mint, err))
+			}
+			supply := decimal.New(int64(mint.Supply), -int32(mint.Decimals))
+			balance := node.getAssetBalanceAt(ctx, math.MaxInt64, a.AssetId)
+			if balance.Cmp(supply) < 0 {
+				panic(fmt.Errorf("invalid balance of %s %s: %s %s", a.AssetId, a.Address, balance, supply))
+			}
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func (node *Node) Index() int {
