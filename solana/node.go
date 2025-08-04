@@ -68,8 +68,31 @@ func (node *Node) Boot(ctx context.Context, version string) {
 	}
 	go node.bootObserver(ctx, version)
 	go node.bootSigner(ctx)
+	go node.mtgBalanceCheckLoop(ctx)
 
 	logger.Printf("node.Boot(%s, %d)", node.id, node.Index())
+}
+
+func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
+	for {
+		as, err := node.store.ListDeployedAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+		for _, a := range as {
+			node.checkMintBalance(ctx, a)
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(time.Minute)
+	}
+}
+
+func (node *Node) checkMintBalance(ctx context.Context, a *solanaApp.DeployedAsset) {
+	supply := node.RPCMintSupply(ctx, a.Address)
+	balance := node.getMtgAssetBalance(ctx, a.AssetId)
+	if balance.Cmp(supply) < 0 {
+		panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s", a.AssetId, a.Address, balance, supply))
+	}
 }
 
 func (node *Node) Index() int {
