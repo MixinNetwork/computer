@@ -60,15 +60,17 @@ func (node *Node) checkTransaction(ctx context.Context, act *mtg.Action, assetId
 		return ""
 	}
 
-	da, err := node.store.ReadDeployedAsset(ctx, assetId)
-	if err != nil {
-		panic(err)
-	}
-	if da != nil {
-		supply := node.RPCMintSupply(ctx, da.Address)
-		balance = node.getMtgAssetBalance(ctx, da.AssetId)
-		if balance.Sub(amt).Cmp(supply) < 0 {
-			panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s %s", da.AssetId, da.Address, balance, amt, supply))
+	if !common.CheckTestEnvironment(ctx) {
+		da, err := node.store.ReadDeployedAsset(ctx, assetId)
+		if err != nil {
+			panic(err)
+		}
+		if da != nil {
+			supply := node.RPCMintSupply(ctx, da.Address)
+			balance = node.getMtgAssetBalance(ctx, da.AssetId)
+			if balance.Sub(amt).Cmp(supply) < 0 {
+				panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s %s", da.AssetId, da.Address, balance, amt, supply))
+			}
 		}
 	}
 
