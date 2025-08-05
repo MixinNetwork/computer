@@ -10,10 +10,6 @@ import (
 	"github.com/blocto/solana-go-sdk/program/address_lookup_table"
 )
 
-const (
-	AddressLookupTableSizeLimit = 256
-)
-
 type AddressLookupTable struct {
 	Account   string
 	Table     string
