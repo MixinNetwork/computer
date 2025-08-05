@@ -256,10 +256,10 @@ CREATE TABLE IF NOT EXISTS address_lookup_tables (
   account         VARCHAR NOT NULL,
   lookup_table    VARCHAR NOT NULL,
   created_at      TIMESTAMP NOT NULL,
-  PRIMARY KEY ('address')
+  PRIMARY KEY ('account')
 );
 
-CREATE INDEX IF NOT EXISTS address_lookup_tables_by_table ON address_lookup_tables(table);
+CREATE INDEX IF NOT EXISTS address_lookup_tables_by_table ON address_lookup_tables(lookup_table);
 
 
 CREATE TABLE IF NOT EXISTS action_results (
