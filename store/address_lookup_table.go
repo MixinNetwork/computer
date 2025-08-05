@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/safe/common"
+	sc "github.com/blocto/solana-go-sdk/common"
 	"github.com/blocto/solana-go-sdk/program/address_lookup_table"
 )
 
@@ -61,4 +62,26 @@ func (s *SQLite3Store) GetLatestAddressLookupTable(ctx context.Context) (string,
 		return "", nil
 	}
 	return table, err
+}
+
+func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table string, accounts []sc.PublicKey) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	now := time.Now().UTC()
+	for _, a := range accounts {
+		vals := []any{a.String(), table, now}
+		err = s.execOne(ctx, tx, buildInsertionSQL("address_lookup_tables", addressLookupTableCols), vals...)
+		if err != nil {
+			return fmt.Errorf("INSERT address_lookup_tables %v", err)
+		}
+	}
+
+	return tx.Commit()
 }

@@ -42,6 +42,10 @@ type Asset struct {
 	FreezeAuthority string `json:"freeze_authority"`
 }
 
+func (c *Client) Client() *rpc.Client {
+	return c.rpcClient
+}
+
 func (c *Client) RPCGetConfirmedHeight(ctx context.Context) (uint64, error) {
 	for {
 		block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentConfirmed)
