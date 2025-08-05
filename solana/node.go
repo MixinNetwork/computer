@@ -89,7 +89,7 @@ func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 
 func (node *Node) checkMintBalance(ctx context.Context, a *solanaApp.DeployedAsset) {
 	supply := node.RPCMintSupply(ctx, a.Address)
-	balance := node.getMtgAssetBalance(ctx, a.AssetId)
+	balance := node.getMtgAssetUnspentAndPendingBalance(ctx, a.AssetId)
 	if balance.Cmp(supply) < 0 {
 		panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s", a.AssetId, a.Address, balance, supply))
 	}

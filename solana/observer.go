@@ -1025,7 +1025,7 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 	return true
 }
 
-func (node *Node) getMtgAssetBalance(ctx context.Context, assetId string) decimal.Decimal {
+func (node *Node) getMtgAssetUnspentAndPendingBalance(ctx context.Context, assetId string) decimal.Decimal {
 	unspent := node.getMtgAssetUnspentBalance(ctx, assetId)
 
 	os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, node.conf.MTG.Genesis.Epoch, math.MaxInt64, mtg.SafeUtxoStateAssigned, 0)
