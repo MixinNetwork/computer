@@ -75,6 +75,7 @@ func (node *Node) Boot(ctx context.Context, version string) {
 
 func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 	for {
+		time.Sleep(time.Minute)
 		as, err := node.store.ListDeployedAssets(ctx)
 		if err != nil {
 			panic(err)
@@ -83,13 +84,12 @@ func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 			node.checkMintBalance(ctx, a)
 			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(time.Minute)
 	}
 }
 
 func (node *Node) checkMintBalance(ctx context.Context, a *solanaApp.DeployedAsset) {
 	supply := node.RPCMintSupply(ctx, a.Address)
-	balance := node.getMtgAssetBalance(ctx, a.AssetId)
+	balance := node.getMtgAssetUnspentAndPendingBalance(ctx, a.AssetId)
 	if balance.Cmp(supply) < 0 {
 		panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s", a.AssetId, a.Address, balance, supply))
 	}
