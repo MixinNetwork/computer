@@ -248,12 +248,22 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
-	tx, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, account)
+	table, err := node.store.GetLatestAddressLookupTable(ctx)
+	if err != nil {
+		panic(err)
+	}
+	tx, table, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, account, table)
 	if err != nil {
 		return err
 	}
 	_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
-	return err
+	if err != nil {
+		return err
+	}
+	return node.store.WriteAddressLookupTable(ctx, &store.AddressLookupTable{
+		Account: account,
+		Table:   table,
+	})
 }
 
 func (node *Node) CreateMintsTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {

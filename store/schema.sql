@@ -252,6 +252,16 @@ CREATE TABLE IF NOT EXISTS burn_system_calls (
 CREATE INDEX IF NOT EXISTS burn_system_calls_by_state_createdx ON burn_system_calls(state, created_at);
 
 
+CREATE TABLE IF NOT EXISTS address_lookup_tables (
+  account       VARCHAR NOT NULL,
+  table         VARCHAR NOT NULL,
+  created_at    TIMESTAMP NOT NULL,
+  PRIMARY KEY ('address')
+);
+
+CREATE INDEX IF NOT EXISTS address_lookup_tables_by_table ON address_lookup_tables(table);
+
+
 CREATE TABLE IF NOT EXISTS action_results (
   output_id       VARCHAR NOT NULL,
   compaction      VARCHAR NOT NULL,
