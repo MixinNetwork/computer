@@ -48,11 +48,11 @@ func (s *SQLite3Store) CheckAddressLookupTable(ctx context.Context, account stri
 	}
 	defer common.Rollback(tx)
 
-	return s.checkExistence(ctx, tx, "SELECT table FROM address_lookup_tables WHERE account=?", account)
+	return s.checkExistence(ctx, tx, "SELECT lookup_table FROM address_lookup_tables WHERE account=?", account)
 }
 
 func (s *SQLite3Store) GetLatestAddressLookupTable(ctx context.Context) (string, error) {
-	query := "SELECT table, COUNT(*) FROM address_lookup_tables WHERE table IN (SELECT table FROM address_lookup_tables ORDER BY created_at DESC LIMIT 1)"
+	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables WHERE lookup_table IN (SELECT lookup_table FROM address_lookup_tables ORDER BY created_at DESC LIMIT 1)"
 	row := s.db.QueryRowContext(ctx, query)
 
 	var table string
@@ -74,9 +74,8 @@ func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table strin
 	}
 	defer common.Rollback(tx)
 
-	now := time.Now().UTC()
 	for _, a := range accounts {
-		vals := []any{a.String(), table, now}
+		vals := []any{a.String(), table, time.Now().UTC()}
 		err = s.execOne(ctx, tx, buildInsertionSQL("address_lookup_tables", addressLookupTableCols), vals...)
 		if err != nil {
 			return fmt.Errorf("INSERT address_lookup_tables %v", err)
