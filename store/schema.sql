@@ -253,9 +253,9 @@ CREATE INDEX IF NOT EXISTS burn_system_calls_by_state_createdx ON burn_system_ca
 
 
 CREATE TABLE IF NOT EXISTS address_lookup_tables (
-  account       VARCHAR NOT NULL,
-  table         VARCHAR NOT NULL,
-  created_at    TIMESTAMP NOT NULL,
+  account         VARCHAR NOT NULL,
+  lookup_table    VARCHAR NOT NULL,
+  created_at      TIMESTAMP NOT NULL,
   PRIMARY KEY ('address')
 );
 

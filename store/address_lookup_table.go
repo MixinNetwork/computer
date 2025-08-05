@@ -17,7 +17,7 @@ type AddressLookupTable struct {
 	CreatedAt time.Time
 }
 
-var addressLookupTableCols = []string{"account", "table", "created_at"}
+var addressLookupTableCols = []string{"account", "lookup_table", "created_at"}
 
 func (s *SQLite3Store) WriteAddressLookupTable(ctx context.Context, a *AddressLookupTable) error {
 	s.mutex.Lock()
