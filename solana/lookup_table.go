@@ -116,3 +116,17 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 
 	return node.store.WriteProperty(ctx, key, "processed")
 }
+
+func (node *Node) getAvailableALT(ctx context.Context, num int) (string, error) {
+	tables, err := node.store.ListAvailableAddressLookupTable(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, table := range tables {
+		if table.Space-uint(num) < 1 {
+			continue
+		}
+		return table.Table, nil
+	}
+	return "", nil
+}

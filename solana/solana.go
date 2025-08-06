@@ -47,7 +47,7 @@ func (node *Node) raydiumRoutesLoop(ctx context.Context) {
 			if err != nil {
 				panic(err)
 			}
-			table, err := node.store.GetLatestAddressLookupTable(ctx)
+			table, err := node.getAvailableALT(ctx, len(accounts))
 			if err != nil {
 				panic(err)
 			}
@@ -285,7 +285,7 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
-	table, err := node.store.GetLatestAddressLookupTable(ctx)
+	table, err := node.getAvailableALT(ctx, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -352,7 +352,7 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	if err != nil {
 		panic(err)
 	}
-	table, err := node.store.GetLatestAddressLookupTable(ctx)
+	table, err := node.getAvailableALT(ctx, 1)
 	if err != nil {
 		panic(err)
 	}

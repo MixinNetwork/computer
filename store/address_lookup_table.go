@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -96,15 +95,35 @@ func (s *SQLite3Store) FilterExistedAddressLookupTable(ctx context.Context, acco
 	return as, nil
 }
 
-func (s *SQLite3Store) GetLatestAddressLookupTable(ctx context.Context) (string, error) {
-	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables WHERE lookup_table IN (SELECT lookup_table FROM address_lookup_tables ORDER BY created_at DESC LIMIT 1)"
-	row := s.db.QueryRowContext(ctx, query)
+type LookupTableStats struct {
+	Table string
+	Space uint
+}
 
-	var table string
-	var count uint
-	err := row.Scan(&table, &count)
-	if err == sql.ErrNoRows || count == address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES {
-		return "", nil
+func (s *SQLite3Store) ListAvailableAddressLookupTable(ctx context.Context) ([]LookupTableStats, error) {
+	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables GROUP BY lookup_table ORDER BY created_at"
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
 	}
-	return table, err
+	defer rows.Close()
+
+	var tables []LookupTableStats
+	for rows.Next() {
+		var table string
+		var count uint
+		err := rows.Scan(&table, &count)
+		if err != nil {
+			return nil, err
+		}
+		space := address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES - count
+		if space == 0 {
+			continue
+		}
+		tables = append(tables, LookupTableStats{
+			Table: table,
+			Space: space,
+		})
+	}
+	return tables, err
 }
