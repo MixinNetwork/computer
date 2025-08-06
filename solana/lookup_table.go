@@ -12,6 +12,10 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
+const (
+	ExtendTableSize = 30
+)
+
 func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 	key := "ADDRESS_LOOKUP_TABLE"
 	val, err := node.store.ReadProperty(ctx, key)
@@ -55,7 +59,7 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 			break
 		}
 		logger.Printf("handle users address loopup table")
-		end := min(start+10, len(as))
+		end := min(start+ExtendTableSize, len(as))
 
 		var accounts []sc.PublicKey
 		for i, a := range as[start:end] {

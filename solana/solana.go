@@ -47,6 +47,7 @@ func (node *Node) raydiumRoutesLoop(ctx context.Context) {
 			if err != nil {
 				panic(err)
 			}
+			accounts = accounts[0:ExtendTableSize]
 			table, err := node.getAvailableALT(ctx, len(accounts))
 			if err != nil {
 				panic(err)
