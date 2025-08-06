@@ -29,7 +29,7 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
 	pb := sc.PublicKeyFromString(payer.PublicKey().String())
 
-	var as []string
+	as := []string{node.SolanaPayer().String()}
 	users, err := node.store.ListNewUsersAfter(ctx, time.Time{})
 	if err != nil {
 		panic(err)
