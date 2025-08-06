@@ -100,7 +100,7 @@ type LookupTableStats struct {
 	Space uint
 }
 
-func (s *SQLite3Store) ListAvailableAddressLookupTable(ctx context.Context) ([]LookupTableStats, error) {
+func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTableStats, error) {
 	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables GROUP BY lookup_table ORDER BY created_at"
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -116,13 +116,9 @@ func (s *SQLite3Store) ListAvailableAddressLookupTable(ctx context.Context) ([]L
 		if err != nil {
 			return nil, err
 		}
-		space := address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES - count
-		if space == 0 {
-			continue
-		}
 		tables = append(tables, LookupTableStats{
 			Table: table,
-			Space: space,
+			Space: address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES - count,
 		})
 	}
 	return tables, err

@@ -113,12 +113,12 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 }
 
 func (node *Node) getAvailableALT(ctx context.Context, num int) (string, error) {
-	tables, err := node.store.ListAvailableAddressLookupTable(ctx)
+	tables, err := node.store.ListAddressLookupTable(ctx)
 	if err != nil {
 		return "", err
 	}
 	for _, table := range tables {
-		if table.Space-uint(num) < 1 {
+		if table.Space == 0 || table.Space-uint(num) < 1 {
 			continue
 		}
 		return table.Table, nil
