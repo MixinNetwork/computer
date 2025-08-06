@@ -64,21 +64,9 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 
 		ins := []solana.Instruction{}
 		if table == "" {
-			slot := block.Context.Slot
-			lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
-				pb,
-				slot,
-			)
-			table = lookupTablePubkey.ToBase58()
-			ins = append(ins, solanaApp.CustomInstruction{
-				Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
-					LookupTable: lookupTablePubkey,
-					Authority:   pb,
-					Payer:       pb,
-					RecentSlot:  slot,
-					BumpSeed:    bumpSeed,
-				}),
-			})
+			instruction, t := solanaApp.BuildCreateAddressLookupTableInstruction(block, pb)
+			table = t
+			ins = append(ins, instruction)
 		}
 		ins = append(ins, solanaApp.CustomInstruction{
 			Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{

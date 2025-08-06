@@ -90,21 +90,9 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user, table string)
 		).Build(),
 	}
 	if table == "" {
-		slot := block.Context.Slot
-		lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
-			pb,
-			slot,
-		)
-		table = lookupTablePubkey.ToBase58()
-		ins = append(ins, CustomInstruction{
-			Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
-				LookupTable: lookupTablePubkey,
-				Authority:   pb,
-				Payer:       pb,
-				RecentSlot:  slot,
-				BumpSeed:    bumpSeed,
-			}),
-		})
+		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
+		table = t
+		ins = append(ins, instruction)
 	}
 	ins = append(ins, CustomInstruction{
 		Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
@@ -145,21 +133,9 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 		computerPriceIns,
 	}
 	if table == "" {
-		slot := block.Context.Slot
-		lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
-			pb,
-			slot,
-		)
-		table = lookupTablePubkey.ToBase58()
-		ins = append(ins, CustomInstruction{
-			Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
-				LookupTable: lookupTablePubkey,
-				Authority:   pb,
-				Payer:       pb,
-				RecentSlot:  slot,
-				BumpSeed:    bumpSeed,
-			}),
-		})
+		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
+		table = t
+		ins = append(ins, instruction)
 	}
 	ins = append(ins, CustomInstruction{
 		Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
@@ -197,21 +173,9 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 	builder.SetRecentBlockHash(block.Value.Blockhash)
 
 	if table == "" {
-		slot := block.Context.Slot
-		lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
-			pb,
-			slot,
-		)
-		table = lookupTablePubkey.ToBase58()
-		builder.AddInstruction(CustomInstruction{
-			Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
-				LookupTable: lookupTablePubkey,
-				Authority:   pb,
-				Payer:       pb,
-				RecentSlot:  slot,
-				BumpSeed:    bumpSeed,
-			}),
-		})
+		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
+		table = t
+		builder.AddInstruction(instruction)
 	}
 
 	for _, asset := range assets {
@@ -598,4 +562,21 @@ func GetSignatureIndexOfAccount(tx solana.Transaction, publicKey solana.PublicKe
 		return -1, nil
 	}
 	return -1, err
+}
+
+func BuildCreateAddressLookupTableInstruction(block *rpc.GetLatestBlockhashResult, payer sc.PublicKey) (CustomInstruction, string) {
+	slot := block.Context.Slot
+	lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
+		payer,
+		slot,
+	)
+	return CustomInstruction{
+		Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
+			LookupTable: lookupTablePubkey,
+			Authority:   payer,
+			Payer:       payer,
+			RecentSlot:  slot,
+			BumpSeed:    bumpSeed,
+		}),
+	}, lookupTablePubkey.ToBase58()
 }
