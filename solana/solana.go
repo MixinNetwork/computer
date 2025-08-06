@@ -31,6 +31,43 @@ const (
 	SolanaTxRetry    = 10
 )
 
+func (node *Node) raydiumRoutesLoop(ctx context.Context) {
+	for {
+		time.Sleep(time.Minute)
+		das, err := node.store.ListDeployedAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+		for _, asset := range das {
+			as, err := solanaApp.GetRaydiumPoolKeysUntilSufficient(ctx, asset.Address)
+			if err != nil {
+				panic(err)
+			}
+			accounts, err := node.store.FilterExistedAddressLookupTable(ctx, as)
+			if err != nil {
+				panic(err)
+			}
+			table, err := node.store.GetLatestAddressLookupTable(ctx)
+			if err != nil {
+				panic(err)
+			}
+			tx, table, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, table, accounts)
+			if err != nil {
+				panic(err)
+			}
+			_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
+			if err != nil {
+				panic(err)
+			}
+			err = node.store.WriteAddressLookupTables(ctx, table, accounts)
+			if err != nil {
+				panic(err)
+			}
+			time.Sleep(time.Second)
+		}
+	}
+}
+
 func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 	for {
 		time.Sleep(time.Second)

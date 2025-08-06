@@ -12,7 +12,7 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
-func (node *Node) createAddressLookupTable(ctx context.Context) error {
+func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 	key := "ADDRESS_LOOKUP_TABLE"
 	val, err := node.store.ReadProperty(ctx, key)
 	if err != nil {

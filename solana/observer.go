@@ -43,7 +43,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 		panic(err)
 	}
 
-	err = node.createAddressLookupTable(ctx)
+	err = node.createALTForUsersAndAssets(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -69,6 +69,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	go node.pendingBurnLoop(ctx)
 
 	go node.solanaRPCBlocksLoop(ctx)
+	go node.raydiumRoutesLoop(ctx)
 
 	go node.refreshAssetsLoop(ctx)
 }

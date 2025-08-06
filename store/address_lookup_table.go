@@ -38,32 +38,6 @@ func (s *SQLite3Store) WriteAddressLookupTable(ctx context.Context, a *AddressLo
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) CheckAddressLookupTable(ctx context.Context, account string) (bool, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return true, err
-	}
-	defer common.Rollback(tx)
-
-	return s.checkExistence(ctx, tx, "SELECT lookup_table FROM address_lookup_tables WHERE account=?", account)
-}
-
-func (s *SQLite3Store) GetLatestAddressLookupTable(ctx context.Context) (string, error) {
-	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables WHERE lookup_table IN (SELECT lookup_table FROM address_lookup_tables ORDER BY created_at DESC LIMIT 1)"
-	row := s.db.QueryRowContext(ctx, query)
-
-	var table string
-	var count uint
-	err := row.Scan(&table, &count)
-	if err == sql.ErrNoRows || count == address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES {
-		return "", nil
-	}
-	return table, err
-}
-
 func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table string, accounts []sc.PublicKey) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -83,4 +57,54 @@ func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table strin
 	}
 
 	return tx.Commit()
+}
+
+func (s *SQLite3Store) CheckAddressLookupTable(ctx context.Context, account string) (bool, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return true, err
+	}
+	defer common.Rollback(tx)
+
+	return s.checkExistence(ctx, tx, "SELECT lookup_table FROM address_lookup_tables WHERE account=?", account)
+}
+
+func (s *SQLite3Store) FilterExistedAddressLookupTable(ctx context.Context, accounts []string) ([]sc.PublicKey, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer common.Rollback(tx)
+
+	var as []sc.PublicKey
+	for _, account := range accounts {
+		existed, err := s.checkExistence(ctx, tx, "SELECT lookup_table FROM address_lookup_tables WHERE account=?", account)
+		if err != nil {
+			return nil, err
+		}
+		if existed {
+			continue
+		}
+		as = append(as, sc.PublicKeyFromString(account))
+	}
+	return as, nil
+}
+
+func (s *SQLite3Store) GetLatestAddressLookupTable(ctx context.Context) (string, error) {
+	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables WHERE lookup_table IN (SELECT lookup_table FROM address_lookup_tables ORDER BY created_at DESC LIMIT 1)"
+	row := s.db.QueryRowContext(ctx, query)
+
+	var table string
+	var count uint
+	err := row.Scan(&table, &count)
+	if err == sql.ErrNoRows || count == address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES {
+		return "", nil
+	}
+	return table, err
 }
