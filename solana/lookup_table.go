@@ -40,6 +40,13 @@ func (node *Node) createALTForUsersAndAssets(ctx context.Context) error {
 	for _, a := range das {
 		as = append(as, a.Address)
 	}
+	nonces, err := node.store.ListNonceAccounts(ctx)
+	if err != nil {
+		panic(err)
+	}
+	for _, a := range nonces {
+		as = append(as, a.Address)
+	}
 
 	var table string
 	start := 0
