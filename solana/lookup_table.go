@@ -12,8 +12,8 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
-func (node *Node) handleUserAddressLookupTable(ctx context.Context) error {
-	key := "USER_ADDRESS_LOOKUP_TABLE"
+func (node *Node) createAddressLookupTable(ctx context.Context) error {
+	key := "ADDRESS_LOOKUP_TABLE"
 	val, err := node.store.ReadProperty(ctx, key)
 	if err != nil {
 		panic(err)
@@ -25,24 +25,35 @@ func (node *Node) handleUserAddressLookupTable(ctx context.Context) error {
 	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
 	pb := sc.PublicKeyFromString(payer.PublicKey().String())
 
+	var as []string
 	users, err := node.store.ListNewUsersAfter(ctx, time.Time{})
 	if err != nil {
 		panic(err)
+	}
+	for _, u := range users {
+		as = append(as, u.ChainAddress)
+	}
+	das, err := node.store.ListDeployedAssets(ctx)
+	if err != nil {
+		panic(err)
+	}
+	for _, a := range das {
+		as = append(as, a.Address)
 	}
 
 	var table string
 	start := 0
 	for {
-		if start >= len(users) {
+		if start >= len(as) {
 			break
 		}
 		logger.Printf("handle users address loopup table")
-		end := min(start+10, len(users))
+		end := min(start+10, len(as))
 
 		var accounts []sc.PublicKey
-		for i, u := range users[start:end] {
-			logger.Println(start+i, u.ChainAddress)
-			accounts = append(accounts, sc.PublicKeyFromString(u.ChainAddress))
+		for i, a := range as[start:end] {
+			logger.Println(start+i, a)
+			accounts = append(accounts, sc.PublicKeyFromString(a))
 		}
 
 		block, err := node.solana.Client().GetLatestBlockhash(ctx, rpc.CommitmentProcessed)

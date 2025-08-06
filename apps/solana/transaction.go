@@ -130,9 +130,34 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user, table string)
 	return tx, table, nil
 }
 
-func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64) (*solana.Transaction, error) {
+func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64, table string) (*solana.Transaction, error) {
 	builder := solana.NewTransactionBuilder()
 	builder.SetFeePayer(payer)
+	pb := sc.PublicKeyFromString(payer.String())
+
+	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
+	if err != nil {
+		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
+	}
+	builder.SetRecentBlockHash(block.Value.Blockhash)
+
+	if table == "" {
+		slot := block.Context.Slot
+		lookupTablePubkey, bumpSeed := address_lookup_table.DeriveLookupTableAddress(
+			pb,
+			slot,
+		)
+		table = lookupTablePubkey.ToBase58()
+		builder.AddInstruction(CustomInstruction{
+			Instruction: address_lookup_table.CreateLookupTable(address_lookup_table.CreateLookupTableParams{
+				LookupTable: lookupTablePubkey,
+				Authority:   pb,
+				Payer:       pb,
+				RecentSlot:  slot,
+				BumpSeed:    bumpSeed,
+			}),
+		})
+	}
 
 	for _, asset := range assets {
 		if asset.ChainId == SolanaChainBase {
@@ -186,16 +211,19 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		builder.AddInstruction(
 			token.NewSetAuthorityInstruction(token.AuthorityMintTokens, mtg, mint, payer, nil).Build(),
 		)
+
+		builder.AddInstruction(CustomInstruction{
+			Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
+				LookupTable: sc.PublicKeyFromString(table),
+				Authority:   pb,
+				Payer:       &pb,
+				Addresses:   []sc.PublicKey{sc.PublicKeyFromString(asset.Address)},
+			}),
+		})
 	}
 
 	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	builder.AddInstruction(computerPriceIns)
-
-	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
-	if err != nil {
-		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
-	}
-	builder.SetRecentBlockHash(block.Value.Blockhash)
 
 	tx, err := builder.Build()
 	if err != nil {

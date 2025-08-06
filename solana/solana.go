@@ -266,7 +266,7 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	})
 }
 
-func (node *Node) CreateMintsTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
+func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
 	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
 	var assets []*solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
@@ -315,7 +315,11 @@ func (node *Node) CreateMintsTransaction(ctx context.Context, asset string) (str
 	if err != nil {
 		panic(err)
 	}
-	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent)
+	table, err := node.store.GetLatestAddressLookupTable(ctx)
+	if err != nil {
+		panic(err)
+	}
+	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent, table)
 	if err != nil {
 		return "", nil, nil, err
 	}
