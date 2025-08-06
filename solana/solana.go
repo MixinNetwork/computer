@@ -319,9 +319,16 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	if err != nil {
 		panic(err)
 	}
-	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent, table)
+	tx, table, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent, table)
 	if err != nil {
 		return "", nil, nil, err
+	}
+	err = node.store.WriteAddressLookupTable(ctx, &store.AddressLookupTable{
+		Account: assets[0].Address,
+		Table:   table,
+	})
+	if err != nil {
+		panic(err)
 	}
 	return tid, tx, assets, nil
 }

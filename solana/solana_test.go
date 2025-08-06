@@ -119,7 +119,7 @@ func TestCreateV1(t *testing.T) {
 	rpcClient := solanaApp.NewClient(rpc)
 
 	mint := solana.MustPrivateKeyFromBase58("bH2GaiFeQVbPKitvweDD9ae8i2peb6QohWZTxBRJKP37siCsWte8HAd9uvbP7dqsL25HUWSDuFKfnPjAyydTnJC")
-	tx, err := rpcClient.CreateMints(
+	tx, _, err := rpcClient.CreateMints(
 		ctx,
 		solana.MPK("5ECPyQVa9gZuig8guSmofttMfYjCMRxqa6nCciFTrsTB"),
 		solana.MPK("5v1eqBfJQkX4JYCi43v7eApXERTNakRBJX1d6Ax6KRzK"),
