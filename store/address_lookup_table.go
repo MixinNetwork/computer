@@ -11,31 +11,11 @@ import (
 )
 
 type AddressLookupTable struct {
-	Account   string
-	Table     string
-	CreatedAt time.Time
+	Account string
+	Table   string
 }
 
 var addressLookupTableCols = []string{"account", "lookup_table", "created_at"}
-
-func (s *SQLite3Store) WriteAddressLookupTable(ctx context.Context, a *AddressLookupTable) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer common.Rollback(tx)
-
-	vals := []any{a.Account, a.Table, time.Now().UTC()}
-	err = s.execOne(ctx, tx, buildInsertionSQL("address_lookup_tables", addressLookupTableCols), vals...)
-	if err != nil {
-		return fmt.Errorf("INSERT address_lookup_tables %v", err)
-	}
-
-	return tx.Commit()
-}
 
 func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table string, accounts []sc.PublicKey) error {
 	s.mutex.Lock()
@@ -88,7 +68,7 @@ type LookupTableStats struct {
 }
 
 func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTableStats, error) {
-	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables GROUP BY lookup_table ORDER BY created_at"
+	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables GROUP BY lookup_table"
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -103,10 +83,13 @@ func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTabl
 		if err != nil {
 			return nil, err
 		}
+		if count > address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES {
+			panic(table)
+		}
 		tables = append(tables, LookupTableStats{
 			Table: table,
 			Space: address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES - count,
 		})
 	}
-	return tables, err
+	return tables, nil
 }

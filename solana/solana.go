@@ -17,6 +17,7 @@ import (
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/apps/ethereum"
 	"github.com/MixinNetwork/safe/common"
+	sc "github.com/blocto/solana-go-sdk/common"
 	"github.com/gagliardetto/solana-go"
 	lookup "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
@@ -301,10 +302,7 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	if err != nil {
 		return err
 	}
-	return node.store.WriteAddressLookupTable(ctx, &store.AddressLookupTable{
-		Account: account,
-		Table:   table,
-	})
+	return node.store.WriteAddressLookupTables(ctx, table, []sc.PublicKey{sc.PublicKeyFromString(account)})
 }
 
 func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
@@ -364,10 +362,8 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	if err != nil {
 		return "", nil, nil, err
 	}
-	err = node.store.WriteAddressLookupTable(ctx, &store.AddressLookupTable{
-		Account: assets[0].Address,
-		Table:   table,
-	})
+	account := sc.PublicKeyFromString(assets[0].Address)
+	err = node.store.WriteAddressLookupTables(ctx, table, []sc.PublicKey{account})
 	if err != nil {
 		panic(err)
 	}
