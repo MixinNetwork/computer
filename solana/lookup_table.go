@@ -122,7 +122,7 @@ func (node *Node) getAvailableALT(ctx context.Context, num int) (string, error) 
 		return "", err
 	}
 	for _, table := range tables {
-		if table.Space == 0 || table.Space-uint(num) < 1 {
+		if table.Space == 0 || table.Space < uint(num) {
 			continue
 		}
 		return table.Table, nil

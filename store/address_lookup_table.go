@@ -58,19 +58,6 @@ func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table strin
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) CheckAddressLookupTable(ctx context.Context, account string) (bool, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return true, err
-	}
-	defer common.Rollback(tx)
-
-	return s.checkExistence(ctx, tx, "SELECT lookup_table FROM address_lookup_tables WHERE account=?", account)
-}
-
 func (s *SQLite3Store) FilterExistedAddressLookupTable(ctx context.Context, accounts []string) ([]sc.PublicKey, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
