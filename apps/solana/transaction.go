@@ -79,17 +79,15 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*sola
 	}
 	blockhash := block.Value.Blockhash
 
-	ins := []solana.Instruction{
-		computerPriceIns,
-		system.NewTransferInstruction(
-			rentExemptBalance,
-			payer.PublicKey(),
-			solana.MPK(user),
-		).Build(),
-	}
-
 	tx, err := solana.NewTransaction(
-		ins,
+		[]solana.Instruction{
+			system.NewTransferInstruction(
+				rentExemptBalance,
+				payer.PublicKey(),
+				solana.MPK(user),
+			).Build(),
+			computerPriceIns,
+		},
 		blockhash,
 		solana.TransactionPayer(payer.PublicKey()),
 	)
