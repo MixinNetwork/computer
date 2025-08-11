@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/safe/common"
 	sc "github.com/blocto/solana-go-sdk/common"
 	"github.com/blocto/solana-go-sdk/program/address_lookup_table"
@@ -62,12 +63,7 @@ func (s *SQLite3Store) FilterExistedAddressLookupTable(ctx context.Context, acco
 	return as, nil
 }
 
-type LookupTableStats struct {
-	Table string
-	Space uint
-}
-
-func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTableStats, error) {
+func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]solanaApp.LookupTableStats, error) {
 	query := "SELECT lookup_table, COUNT(*) FROM address_lookup_tables GROUP BY lookup_table"
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -75,7 +71,7 @@ func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTabl
 	}
 	defer rows.Close()
 
-	var tables []LookupTableStats
+	var tables []solanaApp.LookupTableStats
 	for rows.Next() {
 		var table string
 		var count uint
@@ -86,7 +82,7 @@ func (s *SQLite3Store) ListAddressLookupTable(ctx context.Context) ([]LookupTabl
 		if count > address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES {
 			panic(table)
 		}
-		tables = append(tables, LookupTableStats{
+		tables = append(tables, solanaApp.LookupTableStats{
 			Table: table,
 			Space: address_lookup_table.LOOKUP_TABLE_MAX_ADDRESSES - count,
 		})

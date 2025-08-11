@@ -17,6 +17,7 @@ const (
 	WithdrawalConfirmRequestTimeKey = "withdrawal-request-time"
 	SolanaScanHeightKey             = "solana-scan-height"
 	MPCMessageTimeKey               = "mpc-message-time"
+	UserAltTimeKey                  = "user-alt-time"
 )
 
 type KeygenResult struct {

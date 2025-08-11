@@ -65,19 +65,17 @@ func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent
 	return tx, nil
 }
 
-func (c *Client) InitializeAccount(ctx context.Context, key, user, table string) (*solana.Transaction, string, error) {
+func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*solana.Transaction, error) {
 	payer := solana.MustPrivateKeyFromBase58(key)
-	pb := sc.PublicKeyFromString(payer.PublicKey().String())
-
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 
 	rentExemptBalance, err := c.RPCGetMinimumBalanceForRentExemption(ctx, NormalAccountSize)
 	if err != nil {
-		return nil, "", fmt.Errorf("soalan.GetMinimumBalanceForRentExemption(%d) => %v", NormalAccountSize, err)
+		return nil, fmt.Errorf("soalan.GetMinimumBalanceForRentExemption(%d) => %v", NormalAccountSize, err)
 	}
+	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
-		return nil, "", fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
+		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	blockhash := block.Value.Blockhash
 
@@ -89,19 +87,6 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user, table string)
 			solana.MPK(user),
 		).Build(),
 	}
-	if table == "" {
-		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
-		table = t
-		ins = append(ins, instruction)
-	}
-	ins = append(ins, CustomInstruction{
-		Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
-			LookupTable: sc.PublicKeyFromString(table),
-			Authority:   pb,
-			Payer:       &pb,
-			Addresses:   []sc.PublicKey{sc.PublicKeyFromString(user)},
-		}),
-	})
 
 	tx, err := solana.NewTransaction(
 		ins,
@@ -115,7 +100,7 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user, table string)
 	if err != nil {
 		panic(err)
 	}
-	return tx, table, nil
+	return tx, nil
 }
 
 func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as []sc.PublicKey) (*solana.Transaction, string, error) {
@@ -161,26 +146,19 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 	return tx, table, nil
 }
 
-func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64, table string) (*solana.Transaction, string, error) {
+func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64) (*solana.Transaction, error) {
 	builder := solana.NewTransactionBuilder()
 	builder.SetFeePayer(payer)
-	pb := sc.PublicKeyFromString(payer.String())
 
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
-		return nil, "", fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
+		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	builder.SetRecentBlockHash(block.Value.Blockhash)
 
-	if table == "" {
-		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
-		table = t
-		builder.AddInstruction(instruction)
-	}
-
 	for _, asset := range assets {
 		if asset.ChainId == SolanaChainBase {
-			return nil, "", fmt.Errorf("CreateMints(%s) => invalid asset chain", asset.AssetId)
+			return nil, fmt.Errorf("CreateMints(%s) => invalid asset chain", asset.AssetId)
 		}
 		mint := solana.MustPublicKeyFromBase58(asset.Address)
 
@@ -230,15 +208,6 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		builder.AddInstruction(
 			token.NewSetAuthorityInstruction(token.AuthorityMintTokens, mtg, mint, payer, nil).Build(),
 		)
-
-		builder.AddInstruction(CustomInstruction{
-			Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
-				LookupTable: sc.PublicKeyFromString(table),
-				Authority:   pb,
-				Payer:       &pb,
-				Addresses:   []sc.PublicKey{sc.PublicKeyFromString(asset.Address)},
-			}),
-		})
 	}
 
 	computerPriceIns := c.getPriorityFeeInstruction(ctx)
@@ -250,7 +219,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 	}
 	for _, asset := range assets {
 		if asset.PrivateKey == nil {
-			return nil, "", fmt.Errorf("CreateMints(%s) => asset private key is required", asset.AssetId)
+			return nil, fmt.Errorf("CreateMints(%s) => asset private key is required", asset.AssetId)
 		}
 		_, err = tx.PartialSign(BuildSignersGetter(*asset.PrivateKey))
 		if err != nil {
@@ -261,7 +230,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 			panic(err)
 		}
 	}
-	return tx, table, nil
+	return tx, nil
 }
 
 func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {

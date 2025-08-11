@@ -94,6 +94,11 @@ type Transfer struct {
 	MayClosedWsolAta *solana.PublicKey
 }
 
+type LookupTableStats struct {
+	Table string
+	Space uint
+}
+
 func FindAssociatedTokenAddress(
 	wallet solana.PublicKey,
 	mint solana.PublicKey,

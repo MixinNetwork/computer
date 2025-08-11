@@ -17,7 +17,6 @@ import (
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/apps/ethereum"
 	"github.com/MixinNetwork/safe/common"
-	sc "github.com/blocto/solana-go-sdk/common"
 	"github.com/gagliardetto/solana-go"
 	lookup "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
@@ -32,9 +31,18 @@ const (
 	SolanaTxRetry    = 10
 )
 
-func (node *Node) raydiumRoutesLoop(ctx context.Context) {
+func (node *Node) addressLookupTableLoop(ctx context.Context) {
 	for {
 		time.Sleep(time.Minute)
+		var accounts []string
+		users, err := node.store.ListNewUsersAfter(ctx, node.ReadPropertyAsTime(ctx, store.UserAltTimeKey))
+		if err != nil {
+			panic(err)
+		}
+		for _, u := range users {
+			accounts = append(accounts, u.ChainAddress)
+		}
+
 		das, err := node.store.ListDeployedAssets(ctx)
 		if err != nil {
 			panic(err)
@@ -44,33 +52,69 @@ func (node *Node) raydiumRoutesLoop(ctx context.Context) {
 			if err != nil {
 				panic(err)
 			}
-			accounts, err := node.store.FilterExistedAddressLookupTable(ctx, as)
+			accounts = append(accounts, asset.Address)
+			accounts = append(accounts, as...)
+		}
+
+		err = node.ExtendLookupTable(ctx, accounts)
+		if err != nil {
+			panic(err)
+		}
+		if len(users) > 0 {
+			err = node.writeRequestTime(ctx, store.UserAltTimeKey, users[len(users)-1].CreatedAt)
 			if err != nil {
 				panic(err)
 			}
-			if len(accounts) == 0 {
-				continue
-			}
-			accounts = accounts[0:min(ExtendTableSize, len(accounts))]
-			table, err := node.getAvailableALT(ctx, len(accounts))
-			if err != nil {
-				panic(err)
-			}
-			tx, table, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, table, accounts)
-			if err != nil {
-				panic(err)
-			}
-			_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
-			if err != nil {
-				panic(err)
-			}
-			err = node.store.WriteAddressLookupTables(ctx, table, accounts)
-			if err != nil {
-				panic(err)
-			}
-			time.Sleep(time.Second)
 		}
 	}
+}
+
+func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
+	if len(as) == 0 {
+		return nil
+	}
+	accounts, err := node.store.FilterExistedAddressLookupTable(ctx, as)
+	if err != nil {
+		panic(err)
+	}
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	var start int
+	for {
+		if start >= len(accounts) {
+			break
+		}
+		table, err := node.getAvailableALT(ctx)
+		if err != nil {
+			panic(err)
+		}
+		batch := ExtendTableSize
+		if table != nil {
+			batch = int(min(ExtendTableSize, table.Space))
+		}
+		end := min(start+int(batch), len(accounts))
+		accounts = accounts[start:end]
+
+		tx, alt, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, table.Table, accounts)
+		if err != nil {
+			panic(err)
+		}
+		_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
+		if err != nil {
+			panic(err)
+		}
+		err = node.store.WriteAddressLookupTables(ctx, alt, accounts)
+		if err != nil {
+			panic(err)
+		}
+
+		start = end
+		time.Sleep(time.Second)
+	}
+
+	return nil
 }
 
 func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
@@ -290,19 +334,12 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
-	table, err := node.getAvailableALT(ctx, 1)
-	if err != nil {
-		panic(err)
-	}
-	tx, table, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, account, table)
+	tx, err := node.solana.InitializeAccount(ctx, node.conf.SolanaKey, account)
 	if err != nil {
 		return err
 	}
 	_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
-	if err != nil {
-		return err
-	}
-	return node.store.WriteAddressLookupTables(ctx, table, []sc.PublicKey{sc.PublicKeyFromString(account)})
+	return err
 }
 
 func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
@@ -354,18 +391,9 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	if err != nil {
 		panic(err)
 	}
-	table, err := node.getAvailableALT(ctx, 1)
-	if err != nil {
-		panic(err)
-	}
-	tx, table, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent, table)
+	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent)
 	if err != nil {
 		return "", nil, nil, err
-	}
-	account := sc.PublicKeyFromString(assets[0].Address)
-	err = node.store.WriteAddressLookupTables(ctx, table, []sc.PublicKey{account})
-	if err != nil {
-		panic(err)
 	}
 	return tid, tx, assets, nil
 }
