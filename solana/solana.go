@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"sort"
@@ -70,6 +71,11 @@ func (node *Node) addressLookupTableLoop(ctx context.Context) {
 }
 
 func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
+	am := make(map[string]int)
+	for _, a := range as {
+		am[a] = 1
+	}
+	as = slices.Collect(maps.Keys(am))
 	if len(as) == 0 {
 		return nil
 	}
