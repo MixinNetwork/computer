@@ -86,6 +86,7 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 		if start >= len(accounts) {
 			break
 		}
+		var alt string
 		table, err := node.getAvailableALT(ctx)
 		if err != nil {
 			panic(err)
@@ -93,11 +94,12 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 		batch := store.ExtendTableSize
 		if table != nil {
 			batch = int(min(store.ExtendTableSize, table.Space))
+			alt = table.Table
 		}
 		end := min(start+int(batch), len(accounts))
 		as := accounts[start:end]
 
-		tx, alt, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, table.Table, as)
+		tx, alt, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, alt, as)
 		if err != nil {
 			panic(err)
 		}
