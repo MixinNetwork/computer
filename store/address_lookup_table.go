@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ExtendTableSize = 30
+	ExtendTableSize = 28
 )
 
 type AddressLookupTable struct {

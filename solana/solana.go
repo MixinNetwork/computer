@@ -99,6 +99,7 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 		end := min(start+int(batch), len(accounts))
 		as := accounts[start:end]
 
+		logger.Printf("solana.ExtendLookupTables(%d %d %d)", len(accounts), start, end)
 		tx, alt, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, alt, as)
 		if err != nil {
 			panic(err)
