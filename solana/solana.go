@@ -90,9 +90,9 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 		if err != nil {
 			panic(err)
 		}
-		batch := ExtendTableSize
+		batch := store.ExtendTableSize
 		if table != nil {
-			batch = int(min(ExtendTableSize, table.Space))
+			batch = int(min(store.ExtendTableSize, table.Space))
 		}
 		end := min(start+int(batch), len(accounts))
 		accounts = accounts[start:end]
@@ -964,6 +964,20 @@ func (node *Node) getUserSolanaPublicKeyFromCall(ctx context.Context, c *store.S
 	}
 	pub, _ := node.deriveByPath(share, path)
 	return solana.PublicKeyFromBytes(pub)
+}
+
+func (node *Node) getAvailableALT(ctx context.Context) (*solanaApp.LookupTableStats, error) {
+	tables, err := node.store.ListAddressLookupTable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range tables {
+		if table.Space == 0 {
+			continue
+		}
+		return &table, nil
+	}
+	return nil, nil
 }
 
 func (node *Node) SolanaPayer() solana.PublicKey {

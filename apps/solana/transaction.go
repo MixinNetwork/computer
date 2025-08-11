@@ -103,58 +103,9 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*sola
 	return tx, nil
 }
 
-func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as []sc.PublicKey) (*solana.Transaction, string, error) {
-	payer := solana.MustPrivateKeyFromBase58(key)
-	pb := sc.PublicKeyFromString(payer.PublicKey().String())
-
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
-	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
-	if err != nil {
-		return nil, "", fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
-	}
-	blockhash := block.Value.Blockhash
-
-	ins := []solana.Instruction{
-		computerPriceIns,
-	}
-	if table == "" {
-		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
-		table = t
-		ins = append(ins, instruction)
-	}
-	ins = append(ins, CustomInstruction{
-		Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
-			LookupTable: sc.PublicKeyFromString(table),
-			Authority:   pb,
-			Payer:       &pb,
-			Addresses:   as,
-		}),
-	})
-
-	tx, err := solana.NewTransaction(
-		ins,
-		blockhash,
-		solana.TransactionPayer(payer.PublicKey()),
-	)
-	if err != nil {
-		panic(err)
-	}
-	_, err = tx.Sign(BuildSignersGetter(payer))
-	if err != nil {
-		panic(err)
-	}
-	return tx, table, nil
-}
-
 func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64) (*solana.Transaction, error) {
 	builder := solana.NewTransactionBuilder()
 	builder.SetFeePayer(payer)
-
-	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
-	if err != nil {
-		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
-	}
-	builder.SetRecentBlockHash(block.Value.Blockhash)
 
 	for _, asset := range assets {
 		if asset.ChainId == SolanaChainBase {
@@ -213,6 +164,12 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	builder.AddInstruction(computerPriceIns)
 
+	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
+	if err != nil {
+		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
+	}
+	builder.SetRecentBlockHash(block.Value.Blockhash)
+
 	tx, err := builder.Build()
 	if err != nil {
 		panic(err)
@@ -231,6 +188,49 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		}
 	}
 	return tx, nil
+}
+
+func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as []sc.PublicKey) (*solana.Transaction, string, error) {
+	payer := solana.MustPrivateKeyFromBase58(key)
+	pb := sc.PublicKeyFromString(payer.PublicKey().String())
+
+	computerPriceIns := c.getPriorityFeeInstruction(ctx)
+	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
+	if err != nil {
+		return nil, "", fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
+	}
+	blockhash := block.Value.Blockhash
+
+	ins := []solana.Instruction{
+		computerPriceIns,
+	}
+	if table == "" {
+		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
+		table = t
+		ins = append(ins, instruction)
+	}
+	ins = append(ins, CustomInstruction{
+		Instruction: address_lookup_table.ExtendLookupTable(address_lookup_table.ExtendLookupTableParams{
+			LookupTable: sc.PublicKeyFromString(table),
+			Authority:   pb,
+			Payer:       &pb,
+			Addresses:   as,
+		}),
+	})
+
+	tx, err := solana.NewTransaction(
+		ins,
+		blockhash,
+		solana.TransactionPayer(payer.PublicKey()),
+	)
+	if err != nil {
+		panic(err)
+	}
+	_, err = tx.Sign(BuildSignersGetter(payer))
+	if err != nil {
+		panic(err)
+	}
+	return tx, table, nil
 }
 
 func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {
