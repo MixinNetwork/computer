@@ -665,7 +665,7 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 		},
 	})
 	require.Nil(err)
-	id, _, assets, err := node.CreateMintsTransaction(ctx, common.SafeLitecoinChainId)
+	id, _, assets, err := node.CreateMintTransaction(ctx, common.SafeLitecoinChainId)
 	require.Nil(err)
 	as, err := node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)

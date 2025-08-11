@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"sort"
@@ -30,6 +31,100 @@ const (
 	SolanaBlockDelay = 1
 	SolanaTxRetry    = 10
 )
+
+func (node *Node) addressLookupTableLoop(ctx context.Context) {
+	for {
+		time.Sleep(time.Minute)
+		var accounts []string
+		users, err := node.store.ListNewUsersAfter(ctx, node.ReadPropertyAsTime(ctx, store.UserAltTimeKey))
+		if err != nil {
+			panic(err)
+		}
+		for _, u := range users {
+			accounts = append(accounts, u.ChainAddress)
+		}
+
+		das, err := node.store.ListDeployedAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+		for _, asset := range das {
+			as, err := solanaApp.GetRaydiumPoolKeysUntilSufficient(ctx, asset.Address)
+			if err != nil {
+				panic(err)
+			}
+			accounts = append(accounts, asset.Address)
+			accounts = append(accounts, as...)
+		}
+
+		err = node.ExtendLookupTable(ctx, accounts)
+		if err != nil {
+			panic(err)
+		}
+		if len(users) > 0 {
+			err = node.writeRequestTime(ctx, store.UserAltTimeKey, users[len(users)-1].CreatedAt)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
+func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
+	am := make(map[string]int)
+	for _, a := range as {
+		am[a] = 1
+	}
+	as = slices.Collect(maps.Keys(am))
+	if len(as) == 0 {
+		return nil
+	}
+	accounts, err := node.store.FilterExistedAddressLookupTable(ctx, as)
+	if err != nil {
+		panic(err)
+	}
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	var start int
+	for {
+		if start >= len(accounts) {
+			break
+		}
+		var alt string
+		table, err := node.getAvailableALT(ctx)
+		if err != nil {
+			panic(err)
+		}
+		batch := store.ExtendTableSize
+		if table != nil {
+			batch = int(min(store.ExtendTableSize, table.Space))
+			alt = table.Table
+		}
+		end := min(start+int(batch), len(accounts))
+		as := accounts[start:end]
+
+		logger.Printf("solana.ExtendLookupTables(%d %d %d)", len(accounts), start, end)
+		tx, alt, err := node.solana.ExtendLookupTables(ctx, node.conf.SolanaKey, alt, as)
+		if err != nil {
+			panic(err)
+		}
+		_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
+		if err != nil {
+			panic(err)
+		}
+		err = node.store.WriteAddressLookupTables(ctx, alt, as)
+		if err != nil {
+			panic(err)
+		}
+
+		start = end
+		time.Sleep(time.Second)
+	}
+
+	return nil
+}
 
 func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 	for {
@@ -256,7 +351,7 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	return err
 }
 
-func (node *Node) CreateMintsTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
+func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
 	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
 	var assets []*solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
@@ -878,6 +973,20 @@ func (node *Node) getUserSolanaPublicKeyFromCall(ctx context.Context, c *store.S
 	}
 	pub, _ := node.deriveByPath(share, path)
 	return solana.PublicKeyFromBytes(pub)
+}
+
+func (node *Node) getAvailableALT(ctx context.Context) (*solanaApp.LookupTableStats, error) {
+	tables, err := node.store.ListAddressLookupTable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range tables {
+		if table.Space == 0 {
+			continue
+		}
+		return &table, nil
+	}
+	return nil, nil
 }
 
 func (node *Node) SolanaPayer() solana.PublicKey {

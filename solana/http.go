@@ -33,6 +33,7 @@ func (node *Node) StartHTTP(version string) {
 	router.GET("/favicon.ico", node.httpFavicon)
 	router.GET("/users/:addr", node.httpGetUser)
 	router.GET("/deployed_assets", node.httpGetAssets)
+	router.GET("/address_lookup_tables", node.httpGetAddressLookupTables)
 	router.GET("/system_calls/:id", node.httpGetSystemCall)
 	router.POST("/deployed_assets", node.httpDeployAssets)
 	router.POST("/nonce_accounts", node.httpLockNonce)
@@ -159,6 +160,21 @@ func (node *Node) httpGetAssets(w http.ResponseWriter, r *http.Request, params m
 			"uri":       a.IconUrl.String,
 			"price_usd": a.PriceUSD,
 		})
+	}
+	common.RenderJSON(w, r, http.StatusOK, view)
+}
+
+func (node *Node) httpGetAddressLookupTables(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	ctx := r.Context()
+	ts, err := node.store.ListAddressLookupTable(ctx)
+	if err != nil {
+		common.RenderError(w, r, err)
+		return
+	}
+
+	var view []string
+	for _, t := range ts {
+		view = append(view, t.Table)
 	}
 	common.RenderJSON(w, r, http.StatusOK, view)
 }

@@ -43,7 +43,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 		panic(err)
 	}
 
-	err = node.refundFailedPrepareCalls(ctx)
+	err = node.createALTForAccounts(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -69,6 +69,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	go node.pendingBurnLoop(ctx)
 
 	go node.solanaRPCBlocksLoop(ctx)
+	go node.addressLookupTableLoop(ctx)
 
 	go node.refreshAssetsLoop(ctx)
 }
@@ -350,7 +351,7 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 			continue
 		}
 
-		id, tx, assets, err := node.CreateMintsTransaction(ctx, a.AssetId)
+		id, tx, assets, err := node.CreateMintTransaction(ctx, a.AssetId)
 		if err != nil || tx == nil {
 			return err
 		}
