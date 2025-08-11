@@ -36,8 +36,8 @@ func (s *SQLite3Store) WriteSessionWorkIfNotExist(ctx context.Context, sessionId
 }
 
 func (s *SQLite3Store) CountDailyWorks(ctx context.Context, members []party.ID, begin, end time.Time) ([]int, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

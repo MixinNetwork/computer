@@ -111,8 +111,8 @@ func (s *SQLite3Store) UpdateSessionSigner(ctx context.Context, sessionId, signe
 }
 
 func (s *SQLite3Store) ListSessionPreparedMembers(ctx context.Context, sessionId string, threshold int) ([]party.ID, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	query := fmt.Sprintf("SELECT signer_id FROM session_signers WHERE session_id=? ORDER BY created_at ASC LIMIT %d", threshold)
 	rows, err := s.db.QueryContext(ctx, query, sessionId)
@@ -134,8 +134,8 @@ func (s *SQLite3Store) ListSessionPreparedMembers(ctx context.Context, sessionId
 }
 
 func (s *SQLite3Store) ListSessionSignerResults(ctx context.Context, sessionId string) (map[string]string, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	query := "SELECT signer_id, extra FROM session_signers WHERE session_id=?"
 	rows, err := s.db.QueryContext(ctx, query, sessionId)

@@ -44,8 +44,8 @@ func (s *SQLite3Store) WriteAddressLookupTables(ctx context.Context, table strin
 }
 
 func (s *SQLite3Store) FilterExistedAddressLookupTable(ctx context.Context, accounts []string) ([]sc.PublicKey, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

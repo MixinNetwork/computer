@@ -64,8 +64,8 @@ func (s *SQLite3Store) writeActionResult(ctx context.Context, tx *sql.Tx, output
 }
 
 func (s *SQLite3Store) ReadActionResult(ctx context.Context, outputId, requestId string) (*ActionResult, bool, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
