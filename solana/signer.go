@@ -160,10 +160,10 @@ func (node *Node) loopPendingSessions(ctx context.Context) {
 					panic(fmt.Errorf("node.readKeyByFingerPath(%s) => %s %v", op.Public, public, err))
 				}
 				call, err := node.store.ReadSystemCallByRequestId(ctx, s.RequestId, 0)
-				if err != nil {
-					panic(err)
+				if err != nil || call == nil {
+					panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", s.RequestId, call, err))
 				}
-				if call == nil || call.State != common.RequestStatePending {
+				if call.Signature.Valid || call.State != common.RequestStatePending {
 					err = node.store.MarkSessionDone(ctx, s.Id)
 					logger.Printf("node.MarkSessionDone(%v) => %v", s, err)
 					if err != nil {
