@@ -111,15 +111,15 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 	switch call.State {
 	case common.RequestStateDone, common.RequestStateFailed:
 		err := node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId)
-		if err != nil {
-			return fmt.Errorf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
-		}
+		logger.Printf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
+		return err
 	}
 
 	request, err := node.store.ReadRequest(ctx, op.Id)
 	if err != nil {
 		panic(err)
 	}
+	logger.Printf("store.ReadRequest(%s) => %v", op.Id, request)
 	if request == nil {
 		sufficient := node.checkSufficientBalanceForBurnSystemCall(ctx, call)
 		if !sufficient {
@@ -134,14 +134,16 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 		return nil
 	case common.RequestStateDone:
 		err = node.store.ConfirmPendingBurnSystemCall(ctx, call.RequestId)
+		logger.Printf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
 		if err != nil {
-			return fmt.Errorf("store.ConfirmPendingBurnSystemCall(%s) => %v", call.RequestId, err)
+			return err
 		}
 	case common.RequestStateFailed:
 		id := common.UniqueId(op.Id, "RETRY")
 		err = node.store.UpdatePendingBurnSystemCallRequestId(ctx, call.RequestId, request.Id, id)
+		logger.Printf("store.UpdatePendingBurnSystemCallRequestId(%s %s) => %v", call.RequestId, request.Id, err)
 		if err != nil {
-			return fmt.Errorf("store.UpdatePendingBurnSystemCallRequestId(%s %s %s) => %v", call.RequestId, request.Id, id, err)
+			return err
 		}
 	}
 	return nil

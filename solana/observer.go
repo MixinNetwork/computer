@@ -939,6 +939,11 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 		return err
 	}
 	for _, c := range cs {
+		call, err := node.store.ReadSystemCallByRequestId(ctx, c.Id, 0)
+		if err != nil || call == nil {
+			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.Id, call, err))
+		}
+		logger.Printf("node.handlePendingBurn(%s) => %d %s", call.RequestId, call.State, call.Hash.String)
 		pending, err := node.store.CheckPendingBurnSystemCalls(ctx, c, am[c.Id])
 		if err != nil {
 			panic(err)
@@ -946,10 +951,6 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 		if pending {
 			logger.Printf("store.CheckPendingBurnSystemCalls(%s)", c.Id)
 			continue
-		}
-		call, err := node.store.ReadSystemCallByRequestId(ctx, c.Id, 0)
-		if err != nil || call == nil {
-			panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", c.Id, call, err))
 		}
 		err = node.confirmBurnRelatedSystemCallToGroup(ctx, &common.Operation{
 			Id:    c.RequestId,
