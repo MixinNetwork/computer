@@ -71,7 +71,7 @@ func (s *SQLite3Store) ListInitialNotifications(ctx context.Context) ([]*Notific
 	return ns, nil
 }
 
-func (s *SQLite3Store) MarkNotificationsDone(ctx context.Context, ns []string) error {
+func (s *SQLite3Store) MarkNotificationDone(ctx context.Context, traceId string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -81,13 +81,10 @@ func (s *SQLite3Store) MarkNotificationsDone(ctx context.Context, ns []string) e
 	}
 	defer common.Rollback(tx)
 
-	now := time.Now().UTC()
-	for _, n := range ns {
-		query := "UPDATE tx_notifications SET state=?,updated_at=? WHERE trace_id=? AND state=?"
-		err = s.execOne(ctx, tx, query, common.RequestStateDone, now, n, common.RequestStateInitial)
-		if err != nil {
-			return fmt.Errorf("UPDATE outputs %v", err)
-		}
+	query := "UPDATE tx_notifications SET state=?,updated_at=? WHERE trace_id=? AND state=?"
+	err = s.execOne(ctx, tx, query, common.RequestStateDone, time.Now().UTC(), traceId, common.RequestStateInitial)
+	if err != nil {
+		return fmt.Errorf("UPDATE tx_notifications %v", err)
 	}
 
 	return tx.Commit()
