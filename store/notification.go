@@ -53,7 +53,7 @@ func (s *SQLite3Store) ListInitialNotifications(ctx context.Context) ([]*Notific
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	query := fmt.Sprintf("SELECT %s FROM tx_notifications WHERE state=? LIMIT 20 ORDER BY created_at ASC", strings.Join(notificationCols, ","))
+	query := fmt.Sprintf("SELECT %s FROM tx_notifications WHERE state=? ORDER BY created_at ASC LIMIT 20", strings.Join(notificationCols, ","))
 	rows, err := s.db.QueryContext(ctx, query, common.RequestStateInitial)
 	if err != nil {
 		return nil, err
