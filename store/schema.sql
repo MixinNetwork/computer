@@ -264,8 +264,6 @@ CREATE INDEX IF NOT EXISTS address_lookup_tables_by_table ON address_lookup_tabl
 
 CREATE TABLE IF NOT EXISTS tx_notifications (
   trace_id         VARCHAR NOT NULL,
-  asset_id         VARCHAR NOT NULL,
-  amount           VARCHAR NOT NULL,
   opponent_id      VARCHAR NOT NULL,
   state            INTEGER NOT NULL,
   created_at       TIMESTAMP NOT NULL,

@@ -13,19 +13,17 @@ import (
 
 type Notification struct {
 	TraceId    string
-	AssetId    string
-	Amount     string
 	OpponentId string
 	State      byte
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
 
-var notificationCols = []string{"trace_id", "asset_id", "amount", "opponent_id", "state", "created_at", "updated_at"}
+var notificationCols = []string{"trace_id", "opponent_id", "state", "created_at", "updated_at"}
 
 func notificationFromRow(row Row) (*Notification, error) {
 	var n Notification
-	err := row.Scan(&n.TraceId, &n.AssetId, &n.Amount, &n.OpponentId, &n.State, &n.CreatedAt, &n.UpdatedAt)
+	err := row.Scan(&n.TraceId, &n.OpponentId, &n.State, &n.CreatedAt, &n.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -39,7 +37,7 @@ func (s *SQLite3Store) writeNotifications(ctx context.Context, tx *sql.Tx, txs [
 		if len(t.Receivers) != 1 {
 			continue
 		}
-		vals := []any{t.TraceId, t.AssetId, t.Amount, t.Receivers[0], common.RequestStateInitial, now, now}
+		vals := []any{t.TraceId, t.Receivers[0], common.RequestStateInitial, now, now}
 		err := s.execOne(ctx, tx, buildInsertionSQL("tx_notifications", notificationCols), vals...)
 		if err != nil {
 			return fmt.Errorf("INSERT tx_notifications %v", err)
