@@ -114,15 +114,19 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 			panic(err)
 		}
 
+		mintAuthority := ""
 		freezeAuthority := ""
 		if mint.Parsed.Info.FreezeAuthority != nil {
 			freezeAuthority = mint.Parsed.Info.FreezeAuthority.String()
+		}
+		if mint.Parsed.Info.MintAuthority != nil {
+			mintAuthority = mint.Parsed.Info.MintAuthority.String()
 		}
 		asset := &Asset{
 			Address:         address,
 			Id:              GenerateAssetId(address),
 			Decimals:        uint32(mint.Parsed.Info.Decimals),
-			MintAuthority:   mint.Parsed.Info.MintAuthority.String(),
+			MintAuthority:   mintAuthority,
 			FreezeAuthority: freezeAuthority,
 		}
 		return asset, nil

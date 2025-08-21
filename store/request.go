@@ -122,6 +122,13 @@ func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *m
 		return err
 	}
 
+	if compaction == "" && len(txs) > 0 {
+		err = s.writeNotifications(ctx, tx, txs)
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 

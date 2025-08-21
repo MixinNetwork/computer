@@ -262,6 +262,18 @@ CREATE TABLE IF NOT EXISTS address_lookup_tables (
 CREATE INDEX IF NOT EXISTS address_lookup_tables_by_table ON address_lookup_tables(lookup_table);
 
 
+CREATE TABLE IF NOT EXISTS tx_notifications (
+  trace_id         VARCHAR NOT NULL,
+  opponent_id      VARCHAR NOT NULL,
+  state            INTEGER NOT NULL,
+  created_at       TIMESTAMP NOT NULL,
+  updated_at       TIMESTAMP NOT NULL,
+  PRIMARY KEY ('trace_id')
+);
+
+CREATE INDEX IF NOT EXISTS tx_notifications_by_state_createdx ON tx_notifications(state, created_at);
+
+
 CREATE TABLE IF NOT EXISTS action_results (
   output_id       VARCHAR NOT NULL,
   compaction      VARCHAR NOT NULL,

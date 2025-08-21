@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
@@ -72,6 +73,7 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 	go node.addressLookupTableLoop(ctx)
 
 	go node.refreshAssetsLoop(ctx)
+	go node.notificationLoop(ctx)
 }
 
 func (node *Node) initMPCKeys(ctx context.Context) error {
@@ -307,6 +309,17 @@ func (node *Node) pendingBurnLoop(ctx context.Context) {
 func (node *Node) refreshAssetsLoop(ctx context.Context) {
 	for {
 		err := node.refreshAssets(ctx)
+		if err != nil {
+			panic(err)
+		}
+
+		time.Sleep(time.Minute)
+	}
+}
+
+func (node *Node) notificationLoop(ctx context.Context) {
+	for {
+		err := node.sendTransferNotification(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -1000,6 +1013,30 @@ func (node *Node) refreshAssets(ctx context.Context) error {
 		return err
 	}
 	return node.store.UpdateExternalAssetsInfo(ctx, as)
+}
+
+func (node *Node) sendTransferNotification(ctx context.Context) error {
+	ns, err := node.store.ListInitialNotifications(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, n := range ns {
+		hash := node.group.ReadFinishedTxHashByTraceId(ctx, n.TraceId)
+		if hash == "" {
+			continue
+		}
+		_, err := bot.SafeNotifySnapshot(ctx, hash, 0, n.OpponentId, node.SafeUser())
+		if err != nil {
+			return err
+		}
+		err = node.store.MarkNotificationDone(ctx, n.TraceId)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, call *store.SystemCall) bool {

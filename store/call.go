@@ -213,6 +213,13 @@ func (s *SQLite3Store) RefundOutputsWithRequest(ctx context.Context, req *Reques
 	if err != nil {
 		return err
 	}
+	if compaction == "" && len(txs) > 0 {
+		err = s.writeNotifications(ctx, tx, txs)
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -289,6 +296,13 @@ func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Conte
 		return err
 	}
 
+	if len(txs) > 0 {
+		err = s.writeNotifications(ctx, tx, txs)
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -360,6 +374,13 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 	err = s.finishRequest(ctx, tx, req, txs, compaction)
 	if err != nil {
 		return err
+	}
+
+	if compaction == "" && len(txs) > 0 {
+		err = s.writeNotifications(ctx, tx, txs)
+		if err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()
