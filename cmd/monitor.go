@@ -12,6 +12,7 @@ import (
 	"github.com/MixinNetwork/computer/apps/solana"
 	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/computer/store"
+	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
@@ -154,6 +155,11 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 			return "", err
 		}
 		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String())
+
+		limit := mc.NewIntegerFromString("0.5")
+		if xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewInteger(balance).Cmp(limit) < 0 {
+			state = state + "@40518661\n"
+		}
 
 		state = state + "\nObserver\n"
 		_, am, err := db.ListPendingBurnSystemCalls(ctx)
