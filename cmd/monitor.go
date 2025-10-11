@@ -154,10 +154,11 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		if err != nil {
 			return "", err
 		}
-		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String())
+		b := decimal.NewFromUint64(balance).Div(decimal.New(1, solana.SolanaDecimal)).String()
+		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), b)
 
 		limit := mc.NewIntegerFromString("0.5")
-		if xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewInteger(balance).Cmp(limit) < 0 {
+		if xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewIntegerFromString(b).Cmp(limit) < 0 {
 			state = state + "@40518661\n"
 		}
 
