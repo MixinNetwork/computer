@@ -121,6 +121,11 @@ func (s *SQLite3Store) OccupyNonceAccountByCall(ctx context.Context, address, ca
 	}
 	defer common.Rollback(tx)
 
+	existed, err := s.checkExistence(ctx, tx, "SELECT hash FROM nonce_accounts WHERE address=? AND call_id=?", address, call)
+	if err != nil || existed {
+		return err
+	}
+
 	err = s.execOne(ctx, tx, "UPDATE nonce_accounts SET call_id=?, updated_at=? WHERE address=? AND call_id IS NULL",
 		call, time.Now().UTC(), address)
 	if err != nil {
