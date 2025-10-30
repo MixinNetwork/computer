@@ -12,9 +12,9 @@ import (
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
+	"github.com/MixinNetwork/imaging"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/chai2010/webp"
-	"github.com/disintegration/imaging"
 	"github.com/fogleman/gg"
 )
 
