@@ -88,7 +88,7 @@ func TestCompaction(t *testing.T) {
 	oid1, err := uuid.NewV4()
 	require.Nil(err)
 	extra = user.IdBytes()
-	out1 := testBuildUserRequest(node, oid1.String(), h1.String(), "0.904328411", mtg.StorageAssetId, OperationTypeUserDeposit, extra, nil, nil)
+	out1 := testBuildUserRequest(node, oid1.String(), h1.String(), "0.90432841", mtg.StorageAssetId, OperationTypeUserDeposit, extra, nil, nil)
 	for _, node := range nodes {
 		err = node.store.WriteProperty(ctx, h1.String(), "77770005a99c2e0e2b1da4d648755ef19bd95139acbbe6564cfb06dec7cd34931ca72cdc0001b98ecfc9b5b8c01e1e94a13c05866eb0bc33c7706ed306c9da60a016945eeddd00000000000000000002000000040563e54900071ede9c0d0680d843eb373883ee7383e6f47b7c5720d8e8176139ba0497893aeb6cc3ba624218f1a144ee98de1426a701b45a6dd7211c52b7e87924d751c58cb95f6e7f7a7d1e8017cda22caec31032aeaf239193093e22bcaf9ca742bf42e60ffb9692f26790ca3e0c11ff06937b2127c26791103d0400e125f698a78f6a8b6ab53fdf5e98ea926e41467a78f3b0a3bf68d1a071033091120280dc29c4d46f37151ec76daeb9cb7b49de47caee7196089a45858e68f4e565637b880877597352b9ea3473d8731e19d54459ca3a5f4793c66898510d15ef88a884b6b69fb6a568d073cff9ad3055d6311a97f81f0123e5e8f42284e2928e1099e1f036489aa5290003fffe050000000000033f50830001a3ec1d124a090ed27c235eaabab677e56dde5ba333397a49c6866285d6a8819c5933073ce8b01423b28160348a022059b77a0ee4f4c737fe0f94f055e7e0a6b30003fffe01000000000000002243735f696548465054507975556e444f4e4f507245514d414151414141414141425100010001000065b555876b9158e109739a09bdd1d69026d42f66290fa7c4e8cf95551d7e12a07d0ae2b04f7dceac3bd6893c0cfe9ec49ce8ebf512ba07be1cd859433785ca03")
 		require.Nil(err)
@@ -132,7 +132,8 @@ func TestCompaction(t *testing.T) {
 		}
 
 		sequence += 100
-		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+		_, err = testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+		require.Nil(err)
 
 		out.Sequence = sequence
 		for _, node := range nodes {
@@ -192,7 +193,8 @@ func TestDepositCompaction(t *testing.T) {
 		}
 
 		sequence += 100
-		testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+		_, err = testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
+		require.Nil(err)
 
 		out.Sequence = sequence
 		for _, node := range nodes {
@@ -244,7 +246,8 @@ func TestPostprocessCompaction(t *testing.T) {
 		}
 
 		sequence += 100
-		testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0108"))
+		_, err := testWriteOutputForNodes(ctx, mds, nodes[0].conf.AppId, common.SafeLitecoinChainId, "", "", uint64(sequence), decimal.RequireFromString("0.0108"))
+		require.Nil(err)
 
 		out.Sequence = sequence
 		for _, node := range nodes {
@@ -670,15 +673,14 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 	as, err := node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)
 	require.Len(as, 1)
-	err = node.store.UpdateExternalAssetsInfo(ctx, []*bot.Asset{
-		{
-			AssetID:       common.SafeLitecoinChainId,
-			ChainID:       common.SafeLitecoinChainId,
-			DisplayName:   "Litecoin",
-			DisplaySymbol: "LTC",
-			PriceUSD:      "90",
-		},
-	})
+	err = node.store.UpdateExternalAssetsInfo(ctx, []*bot.Asset{{
+		AssetID:       common.SafeLitecoinChainId,
+		ChainID:       common.SafeLitecoinChainId,
+		DisplayName:   "Litecoin",
+		DisplaySymbol: "LTC",
+		PriceUSD:      "90",
+	}})
+	require.Nil(err)
 	as, err = node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)
 	require.Len(as, 1)
@@ -934,7 +936,7 @@ func testBuildNode(ctx context.Context, require *require.Assertions, root string
 		conf.Computer.SolanaRPC = rpc
 	}
 
-	if !(strings.HasPrefix(conf.Computer.StoreDir, "/tmp/") || strings.HasPrefix(conf.Computer.StoreDir, "/var/folders")) {
+	if !strings.HasPrefix(conf.Computer.StoreDir, "/tmp/") && !strings.HasPrefix(conf.Computer.StoreDir, "/var/folders") {
 		panic(root)
 	}
 	kd, err := store.OpenSQLite3Store(conf.Computer.StoreDir + "/mpc.sqlite3")
