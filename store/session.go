@@ -192,7 +192,7 @@ func (s *SQLite3Store) MarkSessionPreparedWithRequest(ctx context.Context, req *
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) MarkSessionDone(ctx context.Context, sessionId string) error {
+func (s *SQLite3Store) MarkSessionDone(ctx context.Context, sessionId string, callId string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -202,10 +202,19 @@ func (s *SQLite3Store) MarkSessionDone(ctx context.Context, sessionId string) er
 	}
 	defer common.Rollback(tx)
 
+	now := time.Now().UTC()
 	err = s.execOne(ctx, tx, "UPDATE sessions SET state=?, updated_at=? WHERE session_id=? AND state=?",
-		common.RequestStateDone, time.Now().UTC(), sessionId, common.RequestStatePending)
+		common.RequestStateDone, now, sessionId, common.RequestStatePending)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE sessions %v", err)
+	}
+
+	if callId != "" {
+		_, err = tx.ExecContext(ctx, "UPDATE sessions SET state=?, updated_at=? WHERE session_id!=? AND state=? AND request_id=?",
+			common.RequestStateFailed, now, sessionId, common.RequestStatePending, callId)
+		if err != nil {
+			return fmt.Errorf("SQLite3Store UPDATE sessions %v", err)
+		}
 	}
 
 	return tx.Commit()
