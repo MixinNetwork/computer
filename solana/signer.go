@@ -164,8 +164,8 @@ func (node *Node) loopPendingSessions(ctx context.Context) {
 					panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", s.RequestId, call, err))
 				}
 				if call.Signature.Valid || call.State != common.RequestStatePending {
-					err = node.store.MarkSessionDone(ctx, s.Id)
-					logger.Printf("node.MarkSessionDone(%v) => %v", s, err)
+					err = node.store.MarkSessionDone(ctx, s.Id, call.RequestId)
+					logger.Printf("node.MarkSessionDone(%v %s) => %v", s, call.RequestId, err)
 					if err != nil {
 						panic(err)
 					}
@@ -192,7 +192,7 @@ func (node *Node) loopPendingSessions(ctx context.Context) {
 			if err != nil {
 				break
 			}
-			err = node.store.MarkSessionDone(ctx, op.Id)
+			err = node.store.MarkSessionDone(ctx, op.Id, "")
 			logger.Printf("node.MarkSessionDone(%v) => %v", op, err)
 			if err != nil {
 				break

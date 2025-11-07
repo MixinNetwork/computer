@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	loopInterval = time.Second * 5
-	BalanceLimit = 500000000
+	loopInterval     = time.Second * 5
+	mpcRetryInterval = time.Minute * 5
+	BalanceLimit     = 500000000
 )
 
 func (node *Node) bootObserver(ctx context.Context, version string) {
@@ -662,7 +663,7 @@ func (node *Node) processUnsignedCalls(ctx context.Context) error {
 	}
 	for _, call := range calls {
 		now := time.Now().UTC()
-		if call.RequestSignerAt.Valid && call.RequestSignerAt.Time.Add(20*time.Minute).After(now) {
+		if call.RequestSignerAt.Valid && call.RequestSignerAt.Time.Add(mpcRetryInterval).After(now) {
 			continue
 		}
 		logger.Printf("observer.processUnsignedCalls(%s %d)", call.RequestId, len(calls))

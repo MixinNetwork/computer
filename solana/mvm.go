@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
@@ -588,7 +587,7 @@ func (node *Node) processObserverRequestSign(ctx context.Context, req *store.Req
 	if call == nil || call.Signature.Valid || call.State == common.RequestStateFailed {
 		return node.failRequest(ctx, req, "")
 	}
-	if call.RequestSignerAt.Valid && call.RequestSignerAt.Time.Add(20*time.Minute).After(req.CreatedAt) {
+	if call.RequestSignerAt.Valid && call.RequestSignerAt.Time.Add(mpcRetryInterval).After(req.CreatedAt) {
 		return node.failRequest(ctx, req, "")
 	}
 
