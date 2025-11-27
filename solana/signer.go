@@ -169,7 +169,7 @@ func (node *Node) loopPendingSessions(ctx context.Context) {
 					if err != nil {
 						panic(err)
 					}
-					break
+					continue
 				}
 				signed, sig := node.verifySessionSignature(call.MessageBytes(), op.Extra, share, path)
 				if signed {
