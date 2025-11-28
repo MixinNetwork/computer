@@ -72,6 +72,9 @@ func (node *Node) Boot(ctx context.Context, version string) {
 func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
 	for {
 		time.Sleep(time.Minute)
+		if !node.synced(ctx) {
+			continue
+		}
 		as, err := node.store.ListDeployedAssets(ctx)
 		if err != nil {
 			panic(err)
