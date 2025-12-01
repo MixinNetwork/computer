@@ -1027,8 +1027,17 @@ func (node *Node) sendTransferNotification(ctx context.Context) error {
 		if hash == "" {
 			continue
 		}
-		_, err := bot.SafeNotifySnapshot(ctx, hash, 0, n.OpponentId, node.SafeUser())
+		req, err := common.SafeReadTransactionRequestUntilSufficient(ctx, node.mixin, n.TraceId)
 		if err != nil {
+			return err
+		}
+		if req.SnapshotHash == "" {
+			continue
+		}
+
+		_, err = bot.SafeNotifySnapshot(ctx, hash, 0, n.OpponentId, node.SafeUser())
+		if err != nil {
+			logger.Printf("bot.SafeNotifySnapshot(%s %s %s) => %v", n.TraceId, hash, n.OpponentId, err)
 			return err
 		}
 		err = node.store.MarkNotificationDone(ctx, n.TraceId)
