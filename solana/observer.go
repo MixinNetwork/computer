@@ -830,7 +830,11 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 
 	rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, call)
 	if err != nil || rpcTx == nil {
-		return nil, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s) => %v %v", call.RequestId, rpcTx, err)
+		rb, er := tx.MarshalBinary()
+		if er != nil {
+			panic(err)
+		}
+		return nil, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s %x) => %v %v", call.RequestId, rb, rpcTx, err)
 	}
 	txx, err := rpcTx.Transaction.GetTransaction()
 	if err != nil {

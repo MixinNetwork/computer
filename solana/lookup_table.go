@@ -14,16 +14,7 @@ func (node *Node) createALTForAccounts(ctx context.Context) error {
 		return nil
 	}
 
-	as := []string{node.SolanaPayer().String()}
-	nonces, err := node.store.ListNonceAccounts(ctx)
-	if err != nil {
-		panic(err)
-	}
-	for _, a := range nonces {
-		as = append(as, a.Address)
-	}
-
-	err = node.ExtendLookupTable(ctx, as)
+	err = node.ExtendLookupTable(ctx, []string{node.SolanaPayer().String()})
 	if err != nil {
 		panic(err)
 	}
