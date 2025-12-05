@@ -35,7 +35,7 @@ const (
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
 	for {
 		time.Sleep(time.Minute)
-		var accounts []string
+		accounts := []string{node.SolanaPayer().String()}
 		users, err := node.store.ListNewUsersAfter(ctx, node.ReadPropertyAsTime(ctx, store.UserAltTimeKey))
 		if err != nil {
 			panic(err)
