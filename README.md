@@ -41,7 +41,7 @@ A MIX account wants to create BTC/SOL pool to the Raydium program.
 1. Send XIN transaction with extra to computer group to add a User. Then query the HTTP API to get the UID, e.g. 432483921937, and user account address.
 2. Fetch fee payer address, nonce account address and nonce hash from HTTP API, then build Solana transaction with this fee payer address, nonce advance instruction and create pool instructions.
 3. Fetch fee id and amount of XIN for the same worth of SOL to pay the rents of created account needed in System Call.
-4. Send the XIN transaction with 0.001 XIN for operation and extra amount of XIN for rents, and it should reference a storage transaction of Solana transaction, a BTC transaction and a SOL transaction for liquidity.
+4. Send the XIN transaction with 0.0001 XIN for operation and extra amount of XIN for rents, and it should reference a storage transaction of Solana transaction, a BTC transaction and a SOL transaction for liquidity.
 
 The group receives the XIN transaction and will check referenced transactions, the amount of received fee, the payer and the nonce account of storage Solana transaction, then build the prepare System Call to transfer SOL and mint BTC from group account to user account in preparation for System Call created by user. And the MPC would start to generate the signatures for these two System Calls. The prepare System Call created by observer includes the following instructions:
 

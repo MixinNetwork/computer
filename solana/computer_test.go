@@ -106,7 +106,7 @@ func TestCompaction(t *testing.T) {
 	extra = user.IdBytes()
 	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
 	extra = append(extra, FlagWithPostProcess)
-	out = testBuildUserRequest(node, cid, hash, "0.001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, nil)
+	out = testBuildUserRequest(node, cid, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, nil)
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateInitial)
@@ -461,7 +461,7 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	extra = append(extra, uuid.Must(uuid.FromString(id)).Bytes()...)
 	extra = append(extra, FlagWithPostProcess)
 	extra = append(extra, uuid.Must(uuid.FromString(fee.Id)).Bytes()...)
-	out := testBuildUserRequest(node, id, hash, "0.001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, &xinFee)
+	out := testBuildUserRequest(node, id, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, &xinFee)
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 		call, err := node.store.ReadSystemCallByRequestId(ctx, id, common.RequestStateInitial)
@@ -542,7 +542,7 @@ func testUserRequestAddUsers(ctx context.Context, require *require.Assertions, n
 	for _, node := range nodes {
 		uid := common.UniqueId(id, "user1")
 		mix := bot.NewUUIDMixAddress([]string{uid}, 1)
-		out := testBuildUserRequest(node, id, "", "0.001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
+		out := testBuildUserRequest(node, id, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
 		testStep(ctx, require, node, out)
 		user1, err := node.store.ReadUserByMixAddress(ctx, mix.String())
 		require.Nil(err)
@@ -560,7 +560,7 @@ func testUserRequestAddUsers(ctx context.Context, require *require.Assertions, n
 		id2 := common.UniqueId(id, "second")
 		uid = common.UniqueId(id, "user2")
 		mix = bot.NewUUIDMixAddress([]string{uid}, 1)
-		out = testBuildUserRequest(node, id2, "", "0.001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
+		out = testBuildUserRequest(node, id2, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
 		testStep(ctx, require, node, out)
 		user2, err := node.store.ReadUserByMixAddress(ctx, mix.String())
 		require.Nil(err)

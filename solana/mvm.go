@@ -138,7 +138,8 @@ func (node *Node) processUserDeposit(ctx context.Context, req *store.Request) ([
 //
 //  1. user creates system call with locked nonce
 //     memo: user id (8 bytes) | call id (16 bytes) | skip post-process flag (1 byte) | fee id (16 bytes if needed)
-//     if memo includes the fee id and mtg receives extra amount of XIN (> 0.001), same value of SOL would be tranfered to user account in prepare system call.
+//     if memo includes the fee id and mtg receives extra amount of XIN (> 0.0001), same value of SOL would be tranfered
+//     to user account in prepare system call.
 //     processSystemCall
 //     (state: initial, withdrawal_traces: NULL, signature: NULL)
 //
