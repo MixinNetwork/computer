@@ -64,7 +64,8 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 	for {
 		rpcTx, err := node.RPCGetTransaction(ctx, hash)
 		if err != nil {
-			return nil, fmt.Errorf("solana.RPCGetTransaction(%s) => %v", hash, err)
+			logger.Printf("solana.RPCGetTransaction(%s) => %v", hash, err)
+			time.Sleep(time.Second * 3)
 		}
 		if rpcTx != nil {
 			if rpcTx.Meta.Err != nil {
