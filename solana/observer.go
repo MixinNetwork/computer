@@ -822,14 +822,15 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 		}
 		tx.Signatures[index] = solana.SignatureFromBytes(sig)
 	}
+	rb, err := tx.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
 
 	rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, call)
+	logger.Printf("node.SendTransactionUtilConfirm(%s, %x) => %v %v", call.RequestId, rb, rpcTx, err)
 	if err != nil || rpcTx == nil {
-		rb, er := tx.MarshalBinary()
-		if er != nil {
-			panic(err)
-		}
-		return nil, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s %x) => %v %v", call.RequestId, rb, rpcTx, err)
+		return nil, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s) => %v %v", call.RequestId, rpcTx, err)
 	}
 	txx, err := rpcTx.Transaction.GetTransaction()
 	if err != nil {
