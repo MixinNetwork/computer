@@ -704,16 +704,16 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		return nil, ""
 	}
 
-	var ts []*solanaApp.Transfer
+	var t *solanaApp.Transfer
 	var tx *solana.Transaction
 	var meta *rpc.TransactionMeta
 	if common.CheckTestEnvironment(ctx) {
-		ts = append(ts, &solanaApp.Transfer{
+		t = &solanaApp.Transfer{
 			AssetId:  out.AssetId,
 			Receiver: node.SolanaDepositEntry().String(),
 			Sender:   "GTQaVWXJyTyqauC4XgrDKUeVhSFkbS94YnbTnVCbFRiF",
 			Value:    new(big.Int).SetInt64(90432841),
-		})
+		}
 	} else {
 		if len(out.DepositHash.String) < 16 {
 			panic(out.TransactionHash)
@@ -731,84 +731,110 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		if err != nil {
 			panic(err)
 		}
-		ts, err = solanaApp.ExtractTransfersFromTransaction(ctx, tx, rpcTx.Meta, nil)
-		if err != nil {
-			panic(err)
-		}
+		t = solanaApp.ExtractTransferFromTransactionByIndex(ctx, tx, rpcTx.Meta, out.DepositIndex.Int64)
+		logger.Printf("solana.ExtractTransferFromTransactionByIndex(%s %s %d) => %v", out.OutputId, out.DepositHash.String, out.DepositIndex.Int64, t)
+	}
+	if t == nil || t.AssetId != out.AssetId || t.Receiver != node.SolanaDepositEntry().String() {
+		return node.failDepositRequest(ctx, out, "")
+	}
+	asset, err := common.SafeReadAssetUntilSufficient(ctx, t.AssetId)
+	if err != nil {
+		panic(err)
+	}
+	var expected mc.Integer
+	if asset.ChainID == common.SafeSolanaChainId {
+		expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(asset.Precision)).String())
+	} else {
+		expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(solanaApp.AssetDecimal)).String())
+	}
+	actual := mc.NewIntegerFromString(out.Amount.String())
+	if expected.Cmp(actual) != 0 {
+		logger.Printf("invalid deposit amount: %s %s", actual.String(), out.Amount.String())
+		return node.failDepositRequest(ctx, out, "")
 	}
 
-	var txs []*mtg.Transaction
-	var compaction string
-	for i, t := range ts {
-		logger.Printf("%d-th transfer: %v", i, t)
-		if t.AssetId != out.AssetId {
-			continue
-		}
-		if t.Receiver != node.SolanaDepositEntry().String() {
-			continue
-		}
-		user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)
-		logger.Printf("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
-		if err != nil {
-			panic(err)
-		} else if user == nil {
-			memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
-			logger.Printf("solana.ExtractMemoFromTransaction(%s) => %s", tx.Signatures[0].String(), memo)
-			if memo == "" {
-				continue
-			}
-			call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
-			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
-			if err != nil {
-				panic(err)
-			}
-			if call == nil || call.Type != store.CallTypePrepare {
-				continue
-			}
-			superir, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStateFailed)
-			if err != nil {
-				panic(err)
-			}
-			user, err = node.store.ReadUser(ctx, superir.UserIdFromPublicPath())
-			if err != nil {
-				panic(err)
-			}
-		}
-		mix, err := bot.NewMixAddressFromString(user.MixAddress)
-		if err != nil {
-			panic(err)
-		}
-		asset, err := common.SafeReadAssetUntilSufficient(ctx, t.AssetId)
-		if err != nil {
-			panic(err)
-		}
-		var expected mc.Integer
-		if asset.ChainID == common.SafeSolanaChainId {
-			expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(asset.Precision)).String())
-		} else {
-			expected = mc.NewIntegerFromString(decimal.NewFromBigInt(t.Value, -int32(solanaApp.AssetDecimal)).String())
-		}
-		actual := mc.NewIntegerFromString(out.Amount.String())
-		if expected.Cmp(actual) != 0 {
-			continue
-		}
-		id := common.UniqueId(out.DepositHash.String, fmt.Sprintf("deposit-%d", i))
-		id = common.UniqueId(id, t.Receiver)
-		hash := out.DepositHash.String
-		tx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte(hash), id)
-		if tx == nil {
-			return nil, t.AssetId
-		}
-		txs = append(txs, tx)
+	// user == nil: transfer solana withdrawn assets from mtg to mtg deposit entry for failed prepare call
+	// user != nil: transfer or burn assets from user account to mtg deposit entry by post call or deposit call
+	user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)
+	logger.Printf("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
+	if err != nil {
+		panic(err)
 	}
+	var call *store.SystemCall
+	if user == nil {
+		memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
+		logger.Printf("solana.ExtractMemoFromTransaction(%s) => %s", tx.Signatures[0].String(), memo)
+		if memo == "" {
+			return node.failDepositRequest(ctx, out, "")
+		}
+		call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
+		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
+		if err != nil {
+			panic(err)
+		}
+		if call == nil || call.Type != store.CallTypePrepare {
+			return node.failDepositRequest(ctx, out, "")
+		}
+		superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStateFailed)
+		if err != nil {
+			panic(err)
+		}
+		user, err = node.store.ReadUser(ctx, superior.UserIdFromPublicPath())
+		if err != nil {
+			panic(err)
+		}
+		call = superior
+	} else {
+		call, err = node.store.ReadSystemCallByHash(ctx, out.DepositHash.String)
+		logger.Printf("store.ReadSystemCallByHash(%s) => %v %v", out.DepositHash.String, call, err)
+		if err != nil {
+			panic(err)
+		}
+		if call == nil || call.State != common.RequestStateDone {
+			return node.failDepositRequest(ctx, out, "")
+		}
+		switch call.Type {
+		case store.CallTypeDeposit:
+		case store.CallTypePostProcess:
+			superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+			if err != nil {
+				panic(err)
+			}
+			call = superior
+		default:
+			return node.failDepositRequest(ctx, out, "")
+		}
+	}
+	mix, err := bot.NewMixAddressFromString(user.MixAddress)
+	if err != nil {
+		panic(err)
+	}
+	id := common.UniqueId(out.DepositHash.String, fmt.Sprint(out.DepositIndex.Int64))
+	id = common.UniqueId(id, t.Receiver)
+	mtx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte(out.DepositHash.String), id)
+	if mtx == nil {
+		return node.failDepositRequest(ctx, out, t.AssetId)
+	}
+	txs := []*mtg.Transaction{mtx}
+	old := call.GetRefundIds()
+	old = append(old, mtx.TraceId)
+	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
-	err = node.store.WriteDepositRequestIfNotExist(ctx, out, common.RequestStateDone, txs, compaction)
-	logger.Printf("store.WriteDepositRequestIfNotExist(%v %d %s) => %v", out, len(txs), compaction, err)
+	err = node.store.WriteDepositRequestIfNotExist(ctx, out, common.RequestStateDone, call, []*mtg.Transaction{mtx}, "")
+	logger.Printf("store.WriteDepositRequestIfNotExist(%v %s) => %v", out, mtx.TraceId, err)
 	if err != nil {
 		panic(err)
 	}
 
-	return txs, compaction
+	return txs, ""
+}
+
+func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compaction string) ([]*mtg.Transaction, string) {
+	err := node.store.FailDepositRequestIfNotExist(ctx, out, compaction)
+	if err != nil {
+		panic(err)
+	}
+	return nil, ""
 }
 
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {
@@ -993,6 +1019,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
 
 	var txs []*mtg.Transaction
+	var ids []string
 	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
 	for _, burn := range bs {
 		address := burn.GetMintAccount().PublicKey.String()
@@ -1031,7 +1058,11 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 			return node.failRequest(ctx, req, da.AssetId)
 		}
 		txs = append(txs, tx)
+		ids = append(ids, tx.TraceId)
 	}
+	old := call.GetRefundIds()
+	old = append(old, ids...)
+	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
 	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, txs)
 	if err != nil {

@@ -465,6 +465,34 @@ func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction
 	return transfers, nil
 }
 
+func ExtractTransferFromTransactionByIndex(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, index int64) *Transfer {
+	if meta.Err != nil {
+		panic(fmt.Sprint(meta.Err))
+	}
+	msg := tx.Message
+
+	var (
+		tokenAccounts = map[solana.PublicKey]token.Account{}
+		owners        = []*solana.PublicKey{}
+	)
+
+	for _, balance := range meta.PreTokenBalances {
+		if account, err := msg.Account(balance.AccountIndex); err == nil {
+			tokenAccounts[account] = token.Account{
+				Owner: *balance.Owner,
+				Mint:  balance.Mint,
+			}
+			if !slices.ContainsFunc(owners, func(owner *solana.PublicKey) bool {
+				return owner.Equals(*balance.Owner)
+			}) {
+				owners = append(owners, balance.Owner)
+			}
+		}
+	}
+
+	return extractTransfersFromInstruction(&msg, msg.Instructions[index], tokenAccounts, owners, nil)
+}
+
 func ExtractMintsFromTransaction(tx *solana.Transaction) []string {
 	var assets []string
 	for index, ix := range tx.Message.Instructions {
