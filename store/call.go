@@ -198,16 +198,14 @@ func (s *SQLite3Store) RefundOutputsWithRequest(ctx context.Context, req *Reques
 	}
 	defer common.Rollback(tx)
 
-	if call != nil {
-		var ids []string
-		for _, tx := range txs {
-			ids = append(ids, tx.TraceId)
-		}
-		query := "UPDATE system_calls SET state=?, refund_traces=?, updated_at=? WHERE id=? AND state=? AND withdrawal_traces IS NULL"
-		_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, strings.Join(ids, ","), req.CreatedAt, call.RequestId, common.RequestStateInitial)
-		if err != nil {
-			return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
-		}
+	var ids []string
+	for _, tx := range txs {
+		ids = append(ids, tx.TraceId)
+	}
+	query := "UPDATE system_calls SET state=?, refund_traces=?, updated_at=? WHERE id=? AND (state=? OR state=?) AND withdrawal_traces IS NULL"
+	_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, strings.Join(ids, ","), req.CreatedAt, call.RequestId, common.RequestStateInitial, common.RequestStateFailed)
+	if err != nil {
+		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
 
 	for _, o := range os {
@@ -296,6 +294,12 @@ func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Conte
 
 	query := "UPDATE system_calls SET state=?, hash=?, refund_traces=?, updated_at=? WHERE id=? AND state=?"
 	err = s.execOne(ctx, tx, query, call.State, call.Hash, call.RefundTraces, req.CreatedAt, call.RequestId, common.RequestStatePending)
+	if err != nil {
+		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
+	}
+
+	query = "UPDATE system_calls SET refund_traces=?, updated_at=? WHERE id=?"
+	err = s.execOne(ctx, tx, query, call.RefundTraces, req.CreatedAt, call.Superior)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}

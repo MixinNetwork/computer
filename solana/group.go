@@ -39,7 +39,7 @@ func (node *Node) processAction(ctx context.Context, out *mtg.Action) ([]*mtg.Tr
 
 	isDeposit := node.verifyKernelTransaction(ctx, out)
 	if isDeposit {
-		return node.processDeposit(ctx, out)
+		return node.processDeposit(ctx, out, out.Restored())
 	}
 
 	req, err := node.parseRequest(out)
@@ -58,7 +58,7 @@ func (node *Node) processAction(ctx context.Context, out *mtg.Action) ([]*mtg.Tr
 	}
 	if ar != nil {
 		if req.Restored && ar.Compaction != "" {
-			err = node.store.ResetRequest(ctx, req)
+			err = node.store.ResetRequest(ctx, req.Id, req.Sequence)
 			if err != nil {
 				panic(err)
 			}

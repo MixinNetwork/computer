@@ -683,7 +683,7 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 }
 
 // deposit from Solana to mtg deposit entry
-func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.Transaction, string) {
+func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored bool) ([]*mtg.Transaction, string) {
 	logger.Printf("node.processDeposit(%v)", out)
 	ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, out.OutputId)
 	logger.Printf("store.ReadActionResult(%s %s) => %v %t %v", out.OutputId, out.OutputId, ar, handled, err)
@@ -691,7 +691,15 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 		panic(err)
 	}
 	if ar != nil {
-		return ar.Transactions, ar.Compaction
+		if restored {
+			err = node.store.ResetRequest(ctx, out.OutputId, out.Sequence)
+			if err != nil {
+				panic(err)
+			}
+			handled = false
+		} else {
+			return ar.Transactions, ar.Compaction
+		}
 	}
 	if handled {
 		err = node.store.FailAction(ctx, &store.Request{
@@ -830,11 +838,12 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action) ([]*mtg.T
 }
 
 func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compaction string) ([]*mtg.Transaction, string) {
+	logger.Printf("node.failDepositRequest(%v %s)", out, compaction)
 	err := node.store.FailDepositRequestIfNotExist(ctx, out, compaction)
 	if err != nil {
 		panic(err)
 	}
-	return nil, ""
+	return nil, compaction
 }
 
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {

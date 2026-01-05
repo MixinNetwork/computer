@@ -205,7 +205,7 @@ func (s *SQLite3Store) FailRequest(ctx context.Context, req *Request, compaction
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
+func (s *SQLite3Store) ResetRequest(ctx context.Context, reqId string, reqSequence uint64) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -216,7 +216,7 @@ func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
 	defer common.Rollback(tx)
 
 	_, err = tx.ExecContext(ctx, "UPDATE requests SET state=?, sequence=?, updated_at=? WHERE request_id=? AND state=?",
-		common.RequestStateInitial, req.Sequence, time.Now().UTC(), req.Id, common.RequestStateFailed)
+		common.RequestStateInitial, reqSequence, time.Now().UTC(), reqId, common.RequestStateFailed)
 	if err != nil {
 		return fmt.Errorf("UPDATE requests %v", err)
 	}
