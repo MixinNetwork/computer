@@ -937,9 +937,7 @@ func testPrepare(require *require.Assertions, signerTest bool) (context.Context,
 
 func testBuildNode(ctx context.Context, require *require.Assertions, root string, i int) (*Node, *mtg.SQLite3Store) {
 	f, _ := os.ReadFile("../config/example.toml")
-	var conf struct {
-		Computer *Configuration `toml:"computer"`
-	}
+	var conf Config
 	err := toml.Unmarshal(f, &conf)
 	require.Nil(err)
 
@@ -970,7 +968,7 @@ func testBuildNode(ctx context.Context, require *require.Assertions, root string
 	require.Nil(err)
 	group.EnableDebug()
 
-	node := NewNode(kd, group, nil, conf.Computer, nil, nil)
+	node := NewNode(kd, group, nil, &conf, nil, nil)
 	group.AttachWorker(node.conf.AppId, node)
 	return node, md
 }

@@ -19,9 +19,15 @@ import (
 	"github.com/fox-one/mixin-sdk-go/v2"
 )
 
+const (
+	MainNetworkName = "main"
+	TestNetworkName = "test"
+)
+
 type Node struct {
-	id        party.ID
-	threshold int
+	id          party.ID
+	threshold   int
+	networkName string
 
 	conf       *Configuration
 	group      *mtg.Group
@@ -36,20 +42,22 @@ type Node struct {
 	wallet *common.MixinWallet
 }
 
-func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, conf *Configuration, mixin *mixin.Client, wallet *common.MixinWallet) *Node {
+func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, cf *Config, mixin *mixin.Client, wallet *common.MixinWallet) *Node {
+	conf := cf.Computer
 	node := &Node{
-		id:         party.ID(conf.MTG.App.AppId),
-		threshold:  conf.Threshold,
-		conf:       conf,
-		group:      group,
-		network:    network,
-		mutex:      new(sync.Mutex),
-		sessions:   make(map[string]*MultiPartySession),
-		operations: make(map[string]bool),
-		store:      store,
-		mixin:      mixin,
-		wallet:     wallet,
-		solana:     solanaApp.NewClient(conf.SolanaRPC),
+		id:          party.ID(conf.MTG.App.AppId),
+		threshold:   conf.Threshold,
+		networkName: cf.Dev.Network,
+		conf:        conf,
+		group:       group,
+		network:     network,
+		mutex:       new(sync.Mutex),
+		sessions:    make(map[string]*MultiPartySession),
+		operations:  make(map[string]bool),
+		store:       store,
+		mixin:       mixin,
+		wallet:      wallet,
+		solana:      solanaApp.NewClient(conf.SolanaRPC),
 	}
 
 	members := node.GetMembers()
@@ -109,6 +117,10 @@ func (node *Node) Index() int {
 
 func (node *Node) findMember(m string) int {
 	return slices.Index(node.GetMembers(), m)
+}
+
+func (node *Node) Prod() bool {
+	return node.networkName == MainNetworkName
 }
 
 func (node *Node) synced(ctx context.Context) bool {

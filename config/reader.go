@@ -10,12 +10,7 @@ import (
 	"github.com/pelletier/go-toml"
 )
 
-type Configuration struct {
-	Computer *computer.Configuration `toml:"computer"`
-	Dev      *DevConfig              `toml:"dev"`
-}
-
-func ReadConfiguration(path, role string) (*Configuration, error) {
+func ReadConfiguration(path, role string) (*computer.Config, error) {
 	if strings.HasPrefix(path, "~/") {
 		usr, _ := user.Current()
 		path = filepath.Join(usr.HomeDir, (path)[2:])
@@ -24,7 +19,7 @@ func ReadConfiguration(path, role string) (*Configuration, error) {
 	if err != nil {
 		return nil, err
 	}
-	var conf Configuration
+	var conf computer.Config
 	err = toml.Unmarshal(f, &conf)
 	if err != nil {
 		return nil, err

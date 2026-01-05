@@ -5,19 +5,11 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
+	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/mixin/logger"
 )
 
-const MainNetworkName = "main"
-const TestNetworkName = "test"
-
-type DevConfig struct {
-	ProfilePort int    `toml:"profile-port"`
-	LogLevel    int    `toml:"log-level"`
-	Network     string `toml:"network"`
-}
-
-func handleDevConfig(c *DevConfig) {
+func handleDevConfig(c *computer.DevConfig) {
 	logger.SetLevel(logger.INFO)
 	if c == nil {
 		return
@@ -28,6 +20,6 @@ func handleDevConfig(c *DevConfig) {
 		go http.ListenAndServe(l, http.DefaultServeMux)
 	}
 	if c.Network == "" {
-		c.Network = MainNetworkName
+		c.Network = computer.MainNetworkName
 	}
 }

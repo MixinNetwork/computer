@@ -158,10 +158,8 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 		state = state + fmt.Sprintf("💍 Payer %s Balance: %s SOL\n", node.SolanaPayer(), b)
 
 		limit := mc.NewIntegerFromString("0.5")
-		if xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewIntegerFromString(b).Cmp(limit) < 0 {
-			if !common.CheckTestEnvironment(ctx) {
-				state = state + "@40518661\n"
-			}
+		if node.Prod() && (xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewIntegerFromString(b).Cmp(limit) < 0) {
+			state = state + "@40518661\n"
 		}
 
 		state = state + "\nObserver\n"

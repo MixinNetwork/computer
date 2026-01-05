@@ -81,7 +81,7 @@ func ComputerBootCmd(c *cli.Context) error {
 		return err
 	}
 	defer kd.Close()
-	computer := computer.NewNode(kd, group, messenger, mc.Computer, client, mw)
+	computer := computer.NewNode(kd, group, messenger, mc, client, mw)
 	computer.Boot(ctx, version)
 
 	if mmc := mc.Computer.MonitorConversationId; mmc != "" {

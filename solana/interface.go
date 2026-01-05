@@ -8,6 +8,17 @@ import (
 	"github.com/MixinNetwork/safe/mtg"
 )
 
+type Config struct {
+	Computer *Configuration `toml:"computer"`
+	Dev      *DevConfig     `toml:"dev"`
+}
+
+type DevConfig struct {
+	ProfilePort int    `toml:"profile-port"`
+	LogLevel    int    `toml:"log-level"`
+	Network     string `toml:"network"`
+}
+
 type Configuration struct {
 	AppId                   string             `toml:"app-id"`
 	StoreDir                string             `toml:"store-dir"`
