@@ -62,6 +62,11 @@ func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, conf 
 }
 
 func (node *Node) Boot(ctx context.Context, version string) {
+	err := node.store.Migrate(ctx)
+	if err != nil {
+		panic(err)
+	}
+
 	go node.bootObserver(ctx, version)
 	go node.bootSigner(ctx)
 	go node.mtgBalanceCheckLoop(ctx)
