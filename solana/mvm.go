@@ -713,6 +713,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	}
 
 	var t *solanaApp.Transfer
+	var tx *solana.Transaction
 	var meta *rpc.TransactionMeta
 	if common.CheckTestEnvironment(ctx) {
 		t = &solanaApp.Transfer{

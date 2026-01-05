@@ -330,6 +330,7 @@ func buildSystemCallView(call *store.SystemCall) map[string]any {
 		"raw":           call.Raw,
 		"state":         state,
 		"hash":          call.Hash.String,
+		"refund_traces": call.GetRefundIds(),
 	}
 	uid := ""
 	if call.Type == store.CallTypeMain {
