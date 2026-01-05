@@ -159,7 +159,9 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 
 		limit := mc.NewIntegerFromString("0.5")
 		if xinBalance.Cmp(limit) < 0 || solBalance.Cmp(limit) < 0 || mc.NewIntegerFromString(b).Cmp(limit) < 0 {
-			state = state + "@40518661\n"
+			if !common.CheckTestEnvironment(ctx) {
+				state = state + "@40518661\n"
+			}
 		}
 
 		state = state + "\nObserver\n"
