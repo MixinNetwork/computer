@@ -713,7 +713,6 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	}
 
 	var t *solanaApp.Transfer
-	var tx *solana.Transaction
 	var meta *rpc.TransactionMeta
 	if common.CheckTestEnvironment(ctx) {
 		t = &solanaApp.Transfer{
@@ -761,7 +760,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 		return node.failDepositRequest(ctx, out, "")
 	}
 
-	// user == nil: transfer solana withdrawn assets from mtg to mtg deposit entry for failed prepare call
+	// user == nil: transfer solana withdrawn assets from mtg to mtg deposit entry by post call for failed prepare call
 	// user != nil: transfer or burn assets from user account to mtg deposit entry by post call or deposit call
 	user, err := node.store.ReadUserByChainAddress(ctx, t.Sender)
 	logger.Printf("store.ReadUserByAddress(%s) => %v %v", t.Sender, user, err)
