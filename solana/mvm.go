@@ -775,7 +775,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 		if memo == "" {
 			return node.failDepositRequest(ctx, out, "")
 		}
-		call, err := node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
+		call, err = node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
 		if err != nil {
 			panic(err)
