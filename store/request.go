@@ -107,14 +107,22 @@ func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *m
 	defer common.Rollback(tx)
 
 	existed, err := s.checkExistence(ctx, tx, "SELECT request_id FROM requests WHERE request_id=?", out.OutputId)
-	if err != nil || existed {
+	if err != nil {
 		return err
 	}
 
-	vals := []any{out.OutputId, out.TransactionHash, out.OutputIndex, out.AssetId, out.Amount, 0, 0, "", state, out.SequencerCreatedAt, out.SequencerCreatedAt, out.Sequence}
-	err = s.execOne(ctx, tx, buildInsertionSQL("requests", requestCols), vals...)
-	if err != nil {
-		return fmt.Errorf("INSERT requests %v", err)
+	if existed {
+		err := s.execOne(ctx, tx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
+			common.RequestStateDone, time.Now().UTC(), out.OutputId, common.RequestStateInitial)
+		if err != nil {
+			return fmt.Errorf("UPDATE requests %v", err)
+		}
+	} else {
+		vals := []any{out.OutputId, out.TransactionHash, out.OutputIndex, out.AssetId, out.Amount, 0, 0, "", state, out.SequencerCreatedAt, out.SequencerCreatedAt, out.Sequence}
+		err = s.execOne(ctx, tx, buildInsertionSQL("requests", requestCols), vals...)
+		if err != nil {
+			return fmt.Errorf("INSERT requests %v", err)
+		}
 	}
 
 	query := "UPDATE system_calls SET refund_traces=? WHERE id=?"
