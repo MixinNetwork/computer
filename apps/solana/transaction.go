@@ -489,6 +489,19 @@ func ExtractTransferFromTransactionByIndex(ctx context.Context, tx *solana.Trans
 			}
 		}
 	}
+	for _, balance := range meta.PostTokenBalances {
+		if account, err := msg.Account(balance.AccountIndex); err == nil {
+			tokenAccounts[account] = token.Account{
+				Owner: *balance.Owner,
+				Mint:  balance.Mint,
+			}
+			if !slices.ContainsFunc(owners, func(owner *solana.PublicKey) bool {
+				return owner.Equals(*balance.Owner)
+			}) {
+				owners = append(owners, balance.Owner)
+			}
+		}
+	}
 
 	return extractTransfersFromInstruction(&msg, msg.Instructions[index], tokenAccounts, owners, nil)
 }
