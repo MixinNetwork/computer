@@ -425,7 +425,9 @@ func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction
 		innerInstructions[inner.Index] = sis
 	}
 
-	for _, balance := range meta.PreTokenBalances {
+	bs := meta.PreTokenBalances
+	bs = append(bs, meta.PostTokenBalances...)
+	for _, balance := range bs {
 		if account, err := msg.Account(balance.AccountIndex); err == nil {
 			tokenAccounts[account] = token.Account{
 				Owner: *balance.Owner,
@@ -476,20 +478,9 @@ func ExtractTransferFromTransactionByIndex(ctx context.Context, tx *solana.Trans
 		owners        = []*solana.PublicKey{}
 	)
 
-	for _, balance := range meta.PreTokenBalances {
-		if account, err := msg.Account(balance.AccountIndex); err == nil {
-			tokenAccounts[account] = token.Account{
-				Owner: *balance.Owner,
-				Mint:  balance.Mint,
-			}
-			if !slices.ContainsFunc(owners, func(owner *solana.PublicKey) bool {
-				return owner.Equals(*balance.Owner)
-			}) {
-				owners = append(owners, balance.Owner)
-			}
-		}
-	}
-	for _, balance := range meta.PostTokenBalances {
+	bs := meta.PreTokenBalances
+	bs = append(bs, meta.PostTokenBalances...)
+	for _, balance := range bs {
 		if account, err := msg.Account(balance.AccountIndex); err == nil {
 			tokenAccounts[account] = token.Account{
 				Owner: *balance.Owner,
