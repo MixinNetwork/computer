@@ -5,9 +5,9 @@ go 1.25.5
 require (
 	github.com/MixinNetwork/bot-api-go-client/v3 v3.18.0
 	github.com/MixinNetwork/imaging v1.0.0
-	github.com/MixinNetwork/mixin v0.18.28
+	github.com/MixinNetwork/mixin v0.18.29
 	github.com/MixinNetwork/multi-party-sig v0.5.0
-	github.com/MixinNetwork/safe v0.22.0
+	github.com/MixinNetwork/safe v0.23.1
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/davecgh/go-spew v1.1.1
@@ -28,7 +28,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/MixinNetwork/go-number v0.2.0 // indirect
-	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251218231448-1054a6fd9e4e // indirect
+	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260104020744-7268a54d0358 // indirect
 	github.com/aead/siphash v1.0.1 // indirect
 	github.com/andres-erbsen/clock v0.0.0-20160526145045-9e14626cd129 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
@@ -71,7 +71,7 @@ require (
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.32 // indirect
+	github.com/mattn/go-sqlite3 v1.14.33 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -82,7 +82,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
-	github.com/streamingfast/logging v0.0.0-20251216203033-fdad0a00f1ca // indirect
+	github.com/streamingfast/logging v0.0.0-20260108192805-38f96de0a641 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/supranational/blst v0.3.16 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
@@ -101,7 +101,7 @@ require (
 	golang.org/x/image v0.34.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect

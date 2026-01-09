@@ -466,32 +466,32 @@ func extractTransfersFromInstruction(
 			}
 
 			to, ok := tokenAccounts[transfer.GetDestinationAccount().PublicKey]
-			if !ok {
-				if from.Mint.String() == WrappedSolanaAddress {
-					for _, owner := range owners {
-						ata := FindAssociatedTokenAddress(*owner, from.Mint, programKey)
-						if ata.Equals(transfer.GetDestinationAccount().PublicKey) {
-							return &Transfer{
-								TokenAddress:     from.Mint.String(),
-								AssetId:          ethereum.BuildChainAssetId(SolanaChainBase, from.Mint.String()),
-								Sender:           from.Owner.String(),
-								Receiver:         owner.String(),
-								Value:            new(big.Int).SetUint64(*transfer.Amount),
-								MayClosedWsolAta: &ata,
-							}
+			if ok {
+				return &Transfer{
+					TokenAddress: from.Mint.String(),
+					AssetId:      ethereum.BuildChainAssetId(SolanaChainBase, from.Mint.String()),
+					Sender:       from.Owner.String(),
+					Receiver:     to.Owner.String(),
+					Value:        new(big.Int).SetUint64(*transfer.Amount),
+				}
+			}
+
+			if from.Mint.String() == WrappedSolanaAddress {
+				for _, owner := range owners {
+					ata := FindAssociatedTokenAddress(*owner, from.Mint, programKey)
+					if ata.Equals(transfer.GetDestinationAccount().PublicKey) {
+						return &Transfer{
+							TokenAddress:     from.Mint.String(),
+							AssetId:          ethereum.BuildChainAssetId(SolanaChainBase, from.Mint.String()),
+							Sender:           from.Owner.String(),
+							Receiver:         owner.String(),
+							Value:            new(big.Int).SetUint64(*transfer.Amount),
+							MayClosedWsolAta: &ata,
 						}
 					}
 				}
-				panic(fmt.Sprintf("destination token account not found: %s", transfer.GetDestinationAccount().PublicKey.String()))
 			}
-
-			return &Transfer{
-				TokenAddress: from.Mint.String(),
-				AssetId:      ethereum.BuildChainAssetId(SolanaChainBase, from.Mint.String()),
-				Sender:       from.Owner.String(),
-				Receiver:     to.Owner.String(),
-				Value:        new(big.Int).SetUint64(*transfer.Amount),
-			}
+			panic(fmt.Sprintf("destination token account not found: %s", transfer.GetDestinationAccount().PublicKey.String()))
 		}
 
 		// check WSOL transfer and WSOL token account closed
