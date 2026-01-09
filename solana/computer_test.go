@@ -147,6 +147,7 @@ func TestCompaction(t *testing.T) {
 			if i == 2 {
 				require.Equal("", ar.Compaction)
 				require.Len(ar.Transactions, 1)
+				require.Len(call.GetRefundIds(), 1)
 			} else {
 				require.Equal(mtg.StorageAssetId, ar.Compaction)
 				require.Len(ar.Transactions, 0)
@@ -173,6 +174,22 @@ func TestDepositCompaction(t *testing.T) {
 	err = node.store.LockNonceAccountWithMix(ctx, nonce.Address, user.MixAddress)
 	require.Nil(err)
 
+	now := time.Now()
+	id := uuid.Must(uuid.NewV4()).String()
+	for _, node := range nodes {
+		call := &store.SystemCall{
+			RequestId: id,
+			Superior:  id,
+			Type:      store.CallTypeDeposit,
+			State:     common.RequestStateDone,
+			Hash:      sql.NullString{Valid: true, String: "6b33cca6e650a1c2abe4122a466eb7d02f7faa47ee935c80536178bacd913a56"},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		err := node.store.TestWriteCall(ctx, call)
+		require.Nil(err)
+	}
+
 	sequence += 10
 	out, err := testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", sequence, decimal.RequireFromString("0.90432841"))
 	out.OutputId = "329346e1-34c2-4de0-8e35-729518eda8bd"
@@ -195,14 +212,18 @@ func TestDepositCompaction(t *testing.T) {
 		sequence += 100
 		_, err = testWriteOutputForNodes(ctx, mds, conf.AppId, mtg.StorageAssetId, "", "", uint64(sequence), decimal.RequireFromString("0.36"))
 		require.Nil(err)
+		a.Sequence = sequence
 
-		out.Sequence = sequence
 		for _, node := range nodes {
 			a.TestAttachActionToGroup(node.group)
-			txs, compaction := node.processDeposit(ctx, a)
+			txs, compaction := node.processDeposit(ctx, a, i > 0)
 			if i == 2 {
 				require.Len(txs, 1)
 				require.Equal("", compaction)
+
+				call, err := node.store.ReadSystemCallByRequestId(ctx, id, 0)
+				require.Nil(err)
+				require.Len(call.GetRefundIds(), 1)
 			} else {
 				require.Len(txs, 0)
 				require.Equal(mtg.StorageAssetId, compaction)
@@ -307,6 +328,7 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 		call, err := node.store.ReadSystemCallByRequestId(ctx, sub.Superior, common.RequestStateDone)
 		require.Nil(err)
 		require.NotNil(call)
+		require.Len(call.GetRefundIds(), 1)
 
 		ar, _, err := node.store.ReadActionResult(ctx, nid, nid)
 		require.Nil(err)
@@ -915,9 +937,7 @@ func testPrepare(require *require.Assertions, signerTest bool) (context.Context,
 
 func testBuildNode(ctx context.Context, require *require.Assertions, root string, i int) (*Node, *mtg.SQLite3Store) {
 	f, _ := os.ReadFile("../config/example.toml")
-	var conf struct {
-		Computer *Configuration `toml:"computer"`
-	}
+	var conf Config
 	err := toml.Unmarshal(f, &conf)
 	require.Nil(err)
 
@@ -948,7 +968,7 @@ func testBuildNode(ctx context.Context, require *require.Assertions, root string
 	require.Nil(err)
 	group.EnableDebug()
 
-	node := NewNode(kd, group, nil, conf.Computer, nil, nil)
+	node := NewNode(kd, group, nil, &conf, nil, nil)
 	group.AttachWorker(node.conf.AppId, node)
 	return node, md
 }

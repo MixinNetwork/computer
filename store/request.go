@@ -96,7 +96,57 @@ func (s *SQLite3Store) WriteRequestIfNotExist(ctx context.Context, req *Request)
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *mtg.Action, state int, txs []*mtg.Transaction, compaction string) error {
+func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *mtg.Action, state int, call *SystemCall, txs []*mtg.Transaction, compaction string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	existed, err := s.checkExistence(ctx, tx, "SELECT request_id FROM requests WHERE request_id=?", out.OutputId)
+	if err != nil {
+		return err
+	}
+
+	if existed {
+		err := s.execOne(ctx, tx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=? AND state=?",
+			common.RequestStateDone, time.Now().UTC(), out.OutputId, common.RequestStateInitial)
+		if err != nil {
+			return fmt.Errorf("UPDATE requests %v", err)
+		}
+	} else {
+		vals := []any{out.OutputId, out.TransactionHash, out.OutputIndex, out.AssetId, out.Amount, 0, 0, "", state, out.SequencerCreatedAt, out.SequencerCreatedAt, out.Sequence}
+		err = s.execOne(ctx, tx, buildInsertionSQL("requests", requestCols), vals...)
+		if err != nil {
+			return fmt.Errorf("INSERT requests %v", err)
+		}
+	}
+
+	query := "UPDATE system_calls SET refund_traces=? WHERE id=?"
+	err = s.execOne(ctx, tx, query, call.RefundTraces, call.RequestId)
+	if err != nil {
+		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
+	}
+
+	err = s.writeActionResult(ctx, tx, out.OutputId, compaction, txs, out.OutputId)
+	if err != nil {
+		return err
+	}
+
+	if compaction == "" && len(txs) > 0 {
+		err = s.writeNotifications(ctx, tx, txs)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLite3Store) FailDepositRequestIfNotExist(ctx context.Context, out *mtg.Action, compaction string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -111,22 +161,15 @@ func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *m
 		return err
 	}
 
-	vals := []any{out.OutputId, out.TransactionHash, out.OutputIndex, out.AssetId, out.Amount, 0, 0, "", state, out.SequencerCreatedAt, out.SequencerCreatedAt, out.Sequence}
+	vals := []any{out.OutputId, out.TransactionHash, out.OutputIndex, out.AssetId, out.Amount, 0, 0, "", common.RequestStateFailed, out.SequencerCreatedAt, out.SequencerCreatedAt, out.Sequence}
 	err = s.execOne(ctx, tx, buildInsertionSQL("requests", requestCols), vals...)
 	if err != nil {
 		return fmt.Errorf("INSERT requests %v", err)
 	}
 
-	err = s.writeActionResult(ctx, tx, out.OutputId, compaction, txs, out.OutputId)
+	err = s.writeActionResult(ctx, tx, out.OutputId, compaction, nil, out.OutputId)
 	if err != nil {
 		return err
-	}
-
-	if compaction == "" && len(txs) > 0 {
-		err = s.writeNotifications(ctx, tx, txs)
-		if err != nil {
-			return err
-		}
 	}
 
 	return tx.Commit()
@@ -170,7 +213,7 @@ func (s *SQLite3Store) FailRequest(ctx context.Context, req *Request, compaction
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
+func (s *SQLite3Store) ResetRequest(ctx context.Context, reqId string, reqSequence uint64) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -181,7 +224,7 @@ func (s *SQLite3Store) ResetRequest(ctx context.Context, req *Request) error {
 	defer common.Rollback(tx)
 
 	_, err = tx.ExecContext(ctx, "UPDATE requests SET state=?, sequence=?, updated_at=? WHERE request_id=? AND state=?",
-		common.RequestStateInitial, req.Sequence, time.Now().UTC(), req.Id, common.RequestStateFailed)
+		common.RequestStateInitial, reqSequence, time.Now().UTC(), reqId, common.RequestStateFailed)
 	if err != nil {
 		return fmt.Errorf("UPDATE requests %v", err)
 	}

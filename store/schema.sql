@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS system_calls (
   signature             VARCHAR,
   request_signer_at     TIMESTAMP,
   hash                  VARCHAR,
+  refund_traces         VARCHAR,
   created_at            TIMESTAMP NOT NULL,
   updated_at            TIMESTAMP NOT NULL,
   PRIMARY KEY ('id')
