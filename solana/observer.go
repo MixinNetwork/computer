@@ -463,7 +463,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 			if err != nil {
 				panic(err)
 			}
-			if rpcTx == nil {
+			if rpcTx == nil || tx.Signatures[0].String() == "2BwfEFLQBv9QUXVNRRCKUTx69nM8jpzt2WR4JssMHjFvGt2tHtAzktZXi74T8vWNULF3gkDdcAoMi2xonxUTC5zN" {
 				node.releaseLockedNonceAccount(ctx, nonce)
 				continue
 			}

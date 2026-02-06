@@ -63,8 +63,8 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 	retry := SolanaTxRetry
 	for {
 		rpcTx, err := node.RPCGetTransaction(ctx, hash)
+		logger.Printf("solana.RPCGetTransaction(%s) => %v %v", hash, rpcTx, err)
 		if err != nil {
-			logger.Printf("solana.RPCGetTransaction(%s) => %v", hash, err)
 			time.Sleep(time.Second * 3)
 		}
 		if rpcTx != nil {
