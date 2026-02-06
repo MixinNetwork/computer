@@ -450,7 +450,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 		}
 
 		// release nonce account that is occupied by unconfirmed solana tx
-		if call.State == common.RequestStateFailed {
+		if call.State == common.RequestStateFailed && call.RequestId != "035d4b18-451d-336c-abf1-ee9909f4e931" {
 			tx, err := solana.TransactionFromBase64(call.Raw)
 			if err != nil {
 				panic(err)
@@ -463,7 +463,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 			if err != nil {
 				panic(err)
 			}
-			if rpcTx == nil || tx.Signatures[0].String() == "2BwfEFLQBv9QUXVNRRCKUTx69nM8jpzt2WR4JssMHjFvGt2tHtAzktZXi74T8vWNULF3gkDdcAoMi2xonxUTC5zN" {
+			if rpcTx == nil {
 				node.releaseLockedNonceAccount(ctx, nonce)
 				continue
 			}
