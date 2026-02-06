@@ -468,7 +468,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 				continue
 			}
 			if rpcTx.Meta.Err == nil {
-				panic(tx.Signatures[0].String())
+				panic(fmt.Errorf("invalid nonce to release: %s %s %s", call.RequestId, nonce.Address, tx.Signatures[0].String()))
 			}
 		}
 
