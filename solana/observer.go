@@ -50,6 +50,8 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 		panic(err)
 	}
 
+	node.fixFailedCall(ctx)
+
 	go node.initializeUsersLoop(ctx)
 	go node.deployOrConfirmAssetsLoop(ctx)
 
@@ -70,6 +72,28 @@ func (node *Node) bootObserver(ctx context.Context, version string) {
 
 	go node.refreshAssetsLoop(ctx)
 	go node.notificationLoop(ctx)
+}
+
+func (node *Node) fixFailedCall(ctx context.Context) {
+	logger.Printf("observer.fixFailedCall()")
+	callId := "035d4b18-451d-336c-abf1-ee9909f4e931"
+	hash := "2BwfEFLQBv9QUXVNRRCKUTx69nM8jpzt2WR4JssMHjFvGt2tHtAzktZXi74T8vWNULF3gkDdcAoMi2xonxUTC5zN"
+	call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
+	if err != nil || call == nil {
+		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err))
+	}
+	rpcTx, err := node.RPCGetTransaction(ctx, hash)
+	if err != nil || rpcTx == nil {
+		panic(fmt.Errorf("solana.RPCGetTransaction(%s) => %v %v", hash, rpcTx, err))
+	}
+	tx, err := rpcTx.Transaction.GetTransaction()
+	if err != nil {
+		panic(err)
+	}
+	err = node.processSuccessedCall(ctx, call, tx, rpcTx.Meta, []solana.Signature{solana.MustSignatureFromBase58(hash)})
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (node *Node) initMPCKeys(ctx context.Context) error {
