@@ -96,6 +96,18 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 				return nil, sendError
 			}
 
+			rpcTx, err := node.RPCGetTransaction(ctx, hash)
+			logger.Printf("solana.RPCGetTransactionAfterBlockhashNotFound(%s) => %v %v", hash, rpcTx, err)
+			if err != nil {
+				time.Sleep(time.Second * 3)
+			}
+			if rpcTx != nil {
+				if rpcTx.Meta.Err != nil {
+					return nil, fmt.Errorf("%v", rpcTx.Meta.Err)
+				}
+				return rpcTx, nil
+			}
+
 			// outdated nonce account hash when sending tx at first time
 			if retry == SolanaTxRetry {
 				return nil, sendError
