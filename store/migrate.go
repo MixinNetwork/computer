@@ -27,7 +27,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	}
 	now := time.Now().UTC()
 
-	query := "UPDATE system_calls SET state=?, WHERE id=? AND state=?"
+	query := "UPDATE system_calls SET state=? WHERE id=? AND state=?"
 	_, err = tx.ExecContext(ctx, query, common.RequestStatePending, "035d4b18-451d-336c-abf1-ee9909f4e931", common.RequestStateFailed)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
