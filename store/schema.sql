@@ -242,6 +242,7 @@ CREATE TABLE IF NOT EXISTS failed_calls (
 CREATE TABLE IF NOT EXISTS failed_deposits (
   output_id     VARCHAR NOT NULL,
   hash          TEXT NOT NULL,
+  asset_id      VARCHAR NOT NULL,
   amount        VARCHAR NOT NULL,
   handled_by    VARCHAR,
   created_at    TIMESTAMP NOT NULL,

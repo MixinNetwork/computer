@@ -1070,11 +1070,28 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		txs = append(txs, tx)
 		ids = append(ids, tx.TraceId)
 	}
+
+	fd, err := node.store.ReadFailedDepositByHash(ctx, signature)
+	if err != nil {
+		panic(err)
+	}
+	if fd != nil {
+		id := common.UniqueId(signature, fmt.Sprintf("DEPOSIT:%s", fd.AssetId))
+		id = common.UniqueId(id, user.MixAddress)
+		memo := []byte(call.RequestId)
+		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, fd.AssetId, mix.Members(), int(mix.Threshold), fd.Amount, memo, id)
+		if tx == nil {
+			return node.failRequest(ctx, req, fd.AssetId)
+		}
+		txs = append(txs, tx)
+		ids = append(ids, tx.TraceId)
+	}
+
 	old := call.GetRefundIds()
 	old = append(old, ids...)
 	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
-	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, txs)
+	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, fd, txs)
 	if err != nil {
 		panic(err)
 	}
