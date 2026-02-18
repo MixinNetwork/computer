@@ -743,7 +743,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 		logger.Printf("solana.ExtractTransferFromTransactionByIndex(%s %s %d) => %v", out.OutputId, out.DepositHash.String, out.DepositIndex.Int64, t)
 	}
 	if t == nil || t.AssetId != out.AssetId || t.Receiver != node.SolanaDepositEntry().String() {
-		return node.failDepositRequest(ctx, out, "")
+		return node.failDepositRequest(ctx, out, "", false)
 	}
 	asset, err := common.SafeReadAssetUntilSufficient(ctx, t.AssetId)
 	if err != nil {
@@ -758,7 +758,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	actual := mc.NewIntegerFromString(out.Amount.String())
 	if expected.Cmp(actual) != 0 {
 		logger.Printf("invalid deposit amount: %s %s", actual.String(), out.Amount.String())
-		return node.failDepositRequest(ctx, out, "")
+		return node.failDepositRequest(ctx, out, "", false)
 	}
 
 	// user == nil: transfer solana withdrawn assets from mtg to mtg deposit entry by post call for failed prepare call
@@ -773,7 +773,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 		memo := solanaApp.ExtractMemoFromTransaction(ctx, tx, meta, node.SolanaPayer())
 		logger.Printf("solana.ExtractMemoFromTransaction(%s) => %s", tx.Signatures[0].String(), memo)
 		if memo == "" {
-			return node.failDepositRequest(ctx, out, "")
+			return node.failDepositRequest(ctx, out, "", false)
 		}
 		call, err = node.store.ReadSystemCallByRequestId(ctx, memo, common.RequestStateFailed)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", memo, call, err)
@@ -781,7 +781,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 			panic(err)
 		}
 		if call == nil || call.Type != store.CallTypePrepare {
-			return node.failDepositRequest(ctx, out, "")
+			return node.failDepositRequest(ctx, out, "", false)
 		}
 		superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, common.RequestStateFailed)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, superior, err)
@@ -800,7 +800,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 			panic(err)
 		}
 		if call == nil || call.State != common.RequestStateDone {
-			return node.failDepositRequest(ctx, out, "")
+			return node.failDepositRequest(ctx, out, "", true)
 		}
 		switch call.Type {
 		case store.CallTypeDeposit:
@@ -811,7 +811,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 			}
 			call = superior
 		default:
-			return node.failDepositRequest(ctx, out, "")
+			return node.failDepositRequest(ctx, out, "", false)
 		}
 	}
 	mix, err := bot.NewMixAddressFromString(user.MixAddress)
@@ -822,7 +822,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	id = common.UniqueId(id, t.Receiver)
 	mtx := node.buildTransaction(ctx, out, node.conf.AppId, t.AssetId, mix.Members(), int(mix.Threshold), out.Amount.String(), []byte(out.DepositHash.String), id)
 	if mtx == nil {
-		return node.failDepositRequest(ctx, out, t.AssetId)
+		return node.failDepositRequest(ctx, out, t.AssetId, false)
 	}
 	txs := []*mtg.Transaction{mtx}
 	old := call.GetRefundIds()
@@ -838,9 +838,9 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	return txs, ""
 }
 
-func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compaction string) ([]*mtg.Transaction, string) {
+func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compaction string, save bool) ([]*mtg.Transaction, string) {
 	logger.Printf("node.failDepositRequest(%v %s)", out, compaction)
-	err := node.store.FailDepositRequestIfNotExist(ctx, out, compaction)
+	err := node.store.FailDepositRequestIfNotExist(ctx, out, compaction, save)
 	if err != nil {
 		panic(err)
 	}
@@ -1070,11 +1070,28 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		txs = append(txs, tx)
 		ids = append(ids, tx.TraceId)
 	}
+
+	fd, err := node.store.ReadFailedDepositByHash(ctx, signature)
+	if err != nil {
+		panic(err)
+	}
+	if fd != nil {
+		id := common.UniqueId(signature, fmt.Sprintf("DEPOSIT:%s", fd.AssetId))
+		id = common.UniqueId(id, user.MixAddress)
+		memo := []byte(call.RequestId)
+		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, fd.AssetId, mix.Members(), int(mix.Threshold), fd.Amount, memo, id)
+		if tx == nil {
+			return node.failRequest(ctx, req, fd.AssetId)
+		}
+		txs = append(txs, tx)
+		ids = append(ids, tx.TraceId)
+	}
+
 	old := call.GetRefundIds()
 	old = append(old, ids...)
 	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
-	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, txs)
+	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, fd, txs)
 	if err != nil {
 		panic(err)
 	}
