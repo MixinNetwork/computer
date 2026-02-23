@@ -1076,9 +1076,9 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		panic(err)
 	}
 	if fd != nil {
-		id := common.UniqueId(signature, fmt.Sprintf("DEPOSIT:%s", fd.AssetId))
-		id = common.UniqueId(id, user.MixAddress)
-		memo := []byte(call.RequestId)
+		id := common.UniqueId(fd.Hash, fmt.Sprint(fd.Index))
+		id = common.UniqueId(id, node.SolanaDepositEntry().String())
+		memo := []byte(fd.Hash)
 		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, fd.AssetId, mix.Members(), int(mix.Threshold), fd.Amount, memo, id)
 		if tx == nil {
 			return node.failRequest(ctx, req, fd.AssetId)

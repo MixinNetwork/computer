@@ -239,9 +239,10 @@ CREATE TABLE IF NOT EXISTS failed_calls (
 );
 
 
-CREATE TABLE IF NOT EXISTS failed_deposits (
+CREATE TABLE IF NOT EXISTS unconfirmed_deposits (
   output_id     VARCHAR NOT NULL,
-  hash          TEXT NOT NULL,
+  mixin_hash    VARCHAR NOT NULL,
+  mixin_index   INTEGER NOT NULL,
   asset_id      VARCHAR NOT NULL,
   amount        VARCHAR NOT NULL,
   handled_by    VARCHAR,
@@ -249,7 +250,7 @@ CREATE TABLE IF NOT EXISTS failed_deposits (
   PRIMARY KEY ('output_id')
 );
 
-CREATE INDEX IF NOT EXISTS failed_deposits_by_hash ON failed_deposits(hash);
+CREATE INDEX IF NOT EXISTS unconfirmed_deposits_by_hash ON unconfirmed_deposits(mixin_hash);
 
 
 CREATE TABLE IF NOT EXISTS burn_system_calls (
