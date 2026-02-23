@@ -146,7 +146,7 @@ func (s *SQLite3Store) WriteDepositRequestIfNotExist(ctx context.Context, out *m
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) FailDepositRequestIfNotExist(ctx context.Context, out *mtg.Action, compaction string) error {
+func (s *SQLite3Store) FailDepositRequestIfNotExist(ctx context.Context, out *mtg.Action, compaction string, save bool) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -165,6 +165,13 @@ func (s *SQLite3Store) FailDepositRequestIfNotExist(ctx context.Context, out *mt
 	err = s.execOne(ctx, tx, buildInsertionSQL("requests", requestCols), vals...)
 	if err != nil {
 		return fmt.Errorf("INSERT requests %v", err)
+	}
+
+	if save {
+		err = s.writeFailedDeposit(ctx, tx, out)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = s.writeActionResult(ctx, tx, out.OutputId, compaction, nil, out.OutputId)
