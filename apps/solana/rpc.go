@@ -69,7 +69,8 @@ func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.G
 			continue
 		}
 		if err != nil {
-			if strings.Contains(err.Error(), "Block not available for slot") {
+			errStr := err.Error()
+			if strings.Contains(errStr, "Block not available for slot") || strings.Contains(errStr, "Block status not yet available for slot") {
 				time.Sleep(1 * time.Second)
 				continue
 			}
