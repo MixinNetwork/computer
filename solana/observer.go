@@ -17,6 +17,7 @@ import (
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
+	"github.com/MixinNetwork/safe/util"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
@@ -1062,6 +1063,9 @@ func (node *Node) sendTransferNotification(ctx context.Context) error {
 		_, err = bot.SafeNotifySnapshot(ctx, hash, 0, n.OpponentId, node.SafeUser())
 		if err != nil {
 			logger.Printf("bot.SafeNotifySnapshot(%s %s %s) => %v", n.TraceId, hash, n.OpponentId, err)
+			if util.IsErrorCodes(err, 403) {
+				continue
+			}
 			return err
 		}
 		err = node.store.MarkNotificationDone(ctx, n.TraceId)
