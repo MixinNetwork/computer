@@ -121,10 +121,8 @@ func (node *Node) initMPCKeys(ctx context.Context) error {
 			continue
 		}
 
-		now := time.Now().UTC()
 		for i := count; i < node.conf.MPCKeyNumber; i++ {
 			id := common.UniqueId(node.group.GenesisId(), fmt.Sprintf("MPC:BASE:%d", i))
-			id = common.UniqueId(id, now.String())
 			extra := []byte{byte(i)}
 			err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
 				Id:    id,
@@ -136,7 +134,7 @@ func (node *Node) initMPCKeys(ctx context.Context) error {
 			}
 		}
 
-		err = node.writeRequestTime(ctx, store.KeygenRequestTimeKey, now)
+		err = node.writeRequestTime(ctx, store.KeygenRequestTimeKey, time.Now().UTC())
 		if err != nil {
 			return err
 		}
