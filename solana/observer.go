@@ -104,7 +104,7 @@ func (node *Node) initMPCKeys(ctx context.Context) error {
 			return err
 		}
 		if count >= node.conf.MPCKeyNumber {
-			val, err := node.store.ReadProperty(ctx, store.UserInitializeTimeKey)
+			val, err := node.store.ReadProperty(ctx, store.MtgInitializeTimeKey)
 			if err != nil || val != "" {
 				return err
 			}
@@ -112,7 +112,7 @@ func (node *Node) initMPCKeys(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			return node.writeRequestTime(ctx, store.UserInitializeTimeKey, time.Now())
+			return node.writeRequestTime(ctx, store.MtgInitializeTimeKey, time.Now())
 		}
 
 		requestAt := node.ReadPropertyAsTime(ctx, store.KeygenRequestTimeKey)
