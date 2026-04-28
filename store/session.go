@@ -10,6 +10,8 @@ import (
 	"github.com/MixinNetwork/safe/common"
 )
 
+const sessionCols = "session_id, request_id, mixin_hash, mixin_index, operation, public, extra, state, created_at, prepared_at"
+
 type Session struct {
 	Id         string
 	RequestId  string
@@ -227,8 +229,7 @@ func (s *SQLite3Store) ListInitialSessions(ctx context.Context, limit int) ([]*S
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	cols := "session_id, request_id, mixin_hash, mixin_index, operation, public, extra, state, created_at"
-	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? AND committed_at IS NULL AND prepared_at IS NULL ORDER BY operation DESC, created_at ASC, sub_index ASC, session_id ASC LIMIT %d", cols, limit)
+	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? AND committed_at IS NULL AND prepared_at IS NULL ORDER BY operation DESC, created_at ASC, sub_index ASC, session_id ASC LIMIT %d", sessionCols, limit)
 	return s.listSessionsByQuery(ctx, sql, common.RequestStateInitial)
 }
 
@@ -236,8 +237,7 @@ func (s *SQLite3Store) ListPreparedSessions(ctx context.Context, limit int) ([]*
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	cols := "session_id, request_id, mixin_hash, mixin_index, operation, public, extra, state, created_at"
-	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? AND committed_at IS NOT NULL AND prepared_at IS NOT NULL ORDER BY operation DESC, created_at ASC, session_id ASC LIMIT %d", cols, limit)
+	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? AND committed_at IS NOT NULL AND prepared_at IS NOT NULL ORDER BY operation DESC, created_at ASC, session_id ASC LIMIT %d", sessionCols, limit)
 	return s.listSessionsByQuery(ctx, sql, common.RequestStateInitial)
 }
 
@@ -245,8 +245,7 @@ func (s *SQLite3Store) ListPendingSessions(ctx context.Context, limit int) ([]*S
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	cols := "session_id, request_id, mixin_hash, mixin_index, operation, public, extra, state, created_at"
-	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? ORDER BY created_at ASC, session_id ASC LIMIT %d", cols, limit)
+	sql := fmt.Sprintf("SELECT %s FROM sessions WHERE state=? ORDER BY created_at ASC, session_id ASC LIMIT %d", sessionCols, limit)
 	return s.listSessionsByQuery(ctx, sql, common.RequestStatePending)
 }
 
@@ -260,7 +259,7 @@ func (s *SQLite3Store) listSessionsByQuery(ctx context.Context, sql string, stat
 	var sessions []*Session
 	for rows.Next() {
 		var r Session
-		err := rows.Scan(&r.Id, &r.RequestId, &r.MixinHash, &r.MixinIndex, &r.Operation, &r.Public, &r.Extra, &r.State, &r.CreatedAt)
+		err := rows.Scan(&r.Id, &r.RequestId, &r.MixinHash, &r.MixinIndex, &r.Operation, &r.Public, &r.Extra, &r.State, &r.CreatedAt, &r.PreparedAt)
 		if err != nil {
 			return nil, err
 		}

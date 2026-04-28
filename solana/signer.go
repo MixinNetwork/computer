@@ -118,13 +118,19 @@ func (node *Node) listPreparedSessions(ctx context.Context) []*store.Session {
 		panic(err)
 	}
 	for _, s := range prepared {
-		if s.CreatedAt.Add(SessionTimeout).Before(time.Now().UTC()) {
-			err = node.store.FailSession(ctx, s.Id)
-			logger.Printf("store.FailSession(%s, listPreparedSessions) => %v", s.Id, err)
-			if err != nil {
-				panic(err)
+		if s.Operation == OperationTypeSignInput {
+			call, err := node.store.ReadSystemCallByRequestId(ctx, s.RequestId, 0)
+			if err != nil || call == nil {
+				panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", s.RequestId, call, err))
 			}
-			continue
+			if call.RequestSignerAt.Valid && s.CreatedAt.Add(SessionTimeout).Before(call.RequestSignerAt.Time) {
+				err = node.store.FailSession(ctx, s.Id)
+				logger.Printf("store.FailSession(%s, listPreparedSessions) => %v", s.Id, err)
+				if err != nil {
+					panic(err)
+				}
+				continue
+			}
 		}
 		sessions = append(sessions, s)
 		if len(sessions) == parallelization {
