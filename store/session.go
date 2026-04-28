@@ -64,8 +64,11 @@ func (s *SQLite3Store) WriteSessionsWithRequest(ctx context.Context, req *Reques
 
 	for _, session := range sessions {
 		existed, err := s.checkExistence(ctx, tx, "SELECT session_id FROM sessions WHERE session_id=?", session.Id)
-		if err != nil || existed {
+		if err != nil {
 			return err
+		}
+		if existed {
+			continue
 		}
 
 		cols := []string{"session_id", "request_id", "mixin_hash", "mixin_index", "sub_index", "operation", "public",
