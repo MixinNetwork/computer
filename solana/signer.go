@@ -625,7 +625,7 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	valid := node.verifySessionHolder(ctx, hex.EncodeToString(public))
 	logger.Printf("node.verifySessionHolder(%x) => %t", public, valid)
 	if !valid {
-		return nil, ""
+		return node.failRequest(ctx, req, "")
 	}
 
 	fp := hex.EncodeToString(common.Fingerprint(hex.EncodeToString(public)))
