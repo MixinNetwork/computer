@@ -449,7 +449,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 		}
 
 		// release nonce account that is occupied by unconfirmed solana tx
-		if call.State == common.RequestStateFailed && call.RequestId != "035d4b18-451d-336c-abf1-ee9909f4e931" {
+		if call.State == common.RequestStateFailed {
 			tx, err := solana.TransactionFromBase64(call.Raw)
 			if err != nil {
 				panic(err)
