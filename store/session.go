@@ -177,13 +177,7 @@ func (s *SQLite3Store) MarkSessionPreparedWithRequest(ctx context.Context, req *
 	}
 	defer common.Rollback(tx)
 
-	query := "SELECT prepared_at FROM sessions WHERE session_id=? AND prepared_at IS NOT NULL"
-	existed, err := s.checkExistence(ctx, tx, query, sessionId)
-	if err != nil || existed {
-		return err
-	}
-
-	query = "UPDATE sessions SET prepared_at=?, updated_at=? WHERE session_id=? AND state=? AND prepared_at IS NULL"
+	query := "UPDATE sessions SET prepared_at=?, updated_at=? WHERE session_id=? AND state=? AND prepared_at IS NULL"
 	err = s.execOne(ctx, tx, query, preparedAt, preparedAt, sessionId, common.RequestStateInitial)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE sessions %v", err)
