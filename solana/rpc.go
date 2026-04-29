@@ -54,18 +54,19 @@ func (node *Node) checkMintsUntilSufficient(ctx context.Context, ts []*solanaApp
 }
 
 func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Transaction, call *store.SystemCall) (*rpc.GetTransactionResult, error) {
-	id := ""
+	hash := tx.Signatures[0].String()
+	id := hash
 	if call != nil {
 		id = call.RequestId
 	}
 
-	hash := tx.Signatures[0].String()
 	retry := SolanaTxRetry
 	for {
 		rpcTx, err := node.RPCGetTransaction(ctx, hash)
 		logger.Printf("solana.RPCGetTransaction(%s) => %v %v", hash, rpcTx, err)
 		if err != nil {
 			time.Sleep(time.Second * 3)
+			continue
 		}
 		if rpcTx != nil {
 			if rpcTx.Meta.Err != nil {
