@@ -161,8 +161,9 @@ func (s *SQLite3Store) ConfirmNonceAvailableWithRequest(ctx context.Context, req
 	}
 	defer common.Rollback(tx)
 
+	// call maybe be failed when re-processing output after compaction
 	query := "UPDATE system_calls SET state=?, withdrawal_traces=?, request_signer_at=?, updated_at=? WHERE id=? AND state=? AND withdrawal_traces IS NULL"
-	_, err = tx.ExecContext(ctx, query, call.State, call.WithdrawalTraces, call.RequestSignerAt, req.CreatedAt, call.RequestId, common.RequestStateInitial)
+	_, err = tx.ExecContext(ctx, query, call.State, call.WithdrawalTraces, call.RequestSignerAt, req.CreatedAt, call.RequestId, call.State)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
