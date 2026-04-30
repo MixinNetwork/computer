@@ -386,7 +386,7 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 			CreatedAt:  req.CreatedAt,
 		})
 
-		err = node.store.ConfirmNonceAvailableWithRequest(ctx, req, call, prepare, sessions, txs, "")
+		err = node.store.ConfirmNonceAvailableWithRequest(ctx, req, call, prepare, sessions, txs)
 		if err != nil {
 			panic(err)
 		}

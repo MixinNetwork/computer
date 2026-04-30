@@ -151,7 +151,7 @@ func (s *SQLite3Store) WriteDepositCallWithRequest(ctx context.Context, req *Req
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ConfirmNonceAvailableWithRequest(ctx context.Context, req *Request, call, sub *SystemCall, sessions []*Session, txs []*mtg.Transaction, compaction string) error {
+func (s *SQLite3Store) ConfirmNonceAvailableWithRequest(ctx context.Context, req *Request, call, sub *SystemCall, sessions []*Session, txs []*mtg.Transaction) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -182,7 +182,7 @@ func (s *SQLite3Store) ConfirmNonceAvailableWithRequest(ctx context.Context, req
 		}
 	}
 
-	err = s.finishRequest(ctx, tx, req, txs, compaction)
+	err = s.finishRequest(ctx, tx, req, txs, "")
 	if err != nil {
 		return err
 	}
