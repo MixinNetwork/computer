@@ -585,7 +585,11 @@ func (node *Node) processObserverRequestSign(ctx context.Context, req *store.Req
 	if err != nil {
 		panic(err)
 	}
-	if call == nil || call.Signature.Valid || call.State == common.RequestStateFailed {
+	if call == nil || call.Signature.Valid {
+		return node.failRequest(ctx, req, "")
+	}
+	switch call.State {
+	case common.RequestStateFailed, common.RequestStateDone:
 		return node.failRequest(ctx, req, "")
 	}
 	if call.RequestSignerAt.Valid && call.RequestSignerAt.Time.Add(mpcRetryInterval).After(req.CreatedAt) {
