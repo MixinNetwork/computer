@@ -69,7 +69,7 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 		}
 		if rpcTx != nil {
 			if rpcTx.Meta.Err != nil {
-				return nil, fmt.Errorf("%v", rpcTx.Meta.Err)
+				return nil, fmt.Errorf("%s", formatTransactionError(rpcTx.Meta.Err))
 			}
 			return rpcTx, nil
 		}
@@ -268,4 +268,52 @@ func (node *Node) RPCGetMinimumBalanceForRentExemption(ctx context.Context, data
 		panic(err)
 	}
 	return rentExemptBalance, nil
+}
+
+func formatTransactionError(err any) string {
+	if err == nil {
+		return "nil"
+	}
+	switch v := err.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for key, val := range v {
+			switch key {
+			case "InstructionError":
+				arr, ok := val.([]any)
+				if !ok || len(arr) < 2 {
+					return fmt.Sprintf("%s: %v", key, val)
+				}
+				instIdx, _ := arr[0].(float64)
+				inner := formatInstructionErrorDetail(arr[1])
+				return fmt.Sprintf("instruction #%d failed: %s", int(instIdx), inner)
+			default:
+				return fmt.Sprintf("%s: %v", key, val)
+			}
+		}
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func formatInstructionErrorDetail(err any) string {
+	switch v := err.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for key, val := range v {
+			switch key {
+			case "Custom":
+				code, _ := val.(float64)
+				return fmt.Sprintf("custom program error %d (0x%X)", int(code), int(code))
+			default:
+				return fmt.Sprintf("%s: %v", key, val)
+			}
+		}
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

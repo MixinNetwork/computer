@@ -992,7 +992,7 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 		return nil, nil, fmt.Errorf("checkConfirmCallSignature(%s) => invalid call %v", signature, call)
 	}
 	if transaction.Meta.Err != nil {
-		return call, nil, fmt.Errorf("failed solana tx: %s %v", signature, transaction.Meta.Err)
+		return call, nil, fmt.Errorf("failed solana tx: %s %s", signature, formatTransactionError(transaction.Meta.Err))
 	}
 	call.State = common.RequestStateDone
 	call.Hash = sql.NullString{Valid: true, String: signature}

@@ -402,7 +402,7 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		panic(fmt.Errorf("solana.RPCGetTransaction(%s) => %v %v", signature, rpcTx, err))
 	}
 	if rpcTx.Meta.Err != nil {
-		return fmt.Errorf("node.RPCGetTransaction(%s) => %v", signature, rpcTx.Meta.Err)
+		return fmt.Errorf("node.RPCGetTransaction(%s) => %s", signature, formatTransactionError(rpcTx.Meta.Err))
 	}
 	utx, err := rpcTx.Transaction.GetTransaction()
 	if err != nil {
@@ -483,7 +483,7 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 		panic(fmt.Errorf("solana.RPCGetTransaction(%s) => %v %v", signature, rpcTx, err))
 	}
 	if rpcTx.Meta.Err != nil {
-		return fmt.Errorf("node.RPCGetTransaction(%s) => %v", signature, rpcTx.Meta.Err)
+		return fmt.Errorf("node.RPCGetTransaction(%s) => %s", signature, formatTransactionError(rpcTx.Meta.Err))
 	}
 	dtx, err := rpcTx.Transaction.GetTransaction()
 	if err != nil {
