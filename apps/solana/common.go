@@ -239,8 +239,8 @@ func ExtractCreatedAtasFromTransaction(ctx context.Context, tx *solana.Transacti
 			ata := a.GetAccounts()[1]
 			as = append(as, ata.PublicKey)
 		}
-		if a, ok := ix.Impl.(*CreateIdempotent); ok {
-			ata := a.GetAccounts()[1]
+		if a, ok := ix.Impl.(*tokenAta.CreateIdempotent); ok {
+			ata := a.GetAssociatedTokenAddressAccount()
 			as = append(as, ata.PublicKey)
 		}
 	}

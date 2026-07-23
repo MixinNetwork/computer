@@ -15,6 +15,7 @@ import (
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
+	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -158,12 +159,10 @@ func TestCreateIdempotent(t *testing.T) {
 	ata := solanaApp.FindAssociatedTokenAddress(owner, mint, solana.TokenProgramID)
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{
-			solanaApp.NewCreateIdempotentInstruction(
+			tokenAta.NewCreateIdempotentInstructionWithTokenProgram(
 				owner,
-				ata,
 				owner,
 				mint,
-				system.ProgramID,
 				solana.TokenProgramID,
 			).Build(),
 		},
@@ -184,12 +183,10 @@ func TestCreateIdempotent(t *testing.T) {
 	ata = solanaApp.FindAssociatedTokenAddress(owner, mint, solana.Token2022ProgramID)
 	tx, err = solana.NewTransaction(
 		[]solana.Instruction{
-			solanaApp.NewCreateIdempotentInstruction(
+			tokenAta.NewCreateIdempotentInstructionWithTokenProgram(
 				owner,
-				ata,
 				owner,
 				mint,
-				system.ProgramID,
 				solana.Token2022ProgramID,
 			).Build(),
 		},

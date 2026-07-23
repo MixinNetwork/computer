@@ -10,6 +10,7 @@ import (
 	sc "github.com/blocto/solana-go-sdk/common"
 	"github.com/blocto/solana-go-sdk/program/address_lookup_table"
 	"github.com/gagliardetto/solana-go"
+	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
@@ -247,12 +248,10 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 		mint := transfer.Mint
 		ataAddress := FindAssociatedTokenAddress(transfer.Destination, mint, solana.TokenProgramID)
 		builder.AddInstruction(
-			NewCreateIdempotentInstruction(
+			tokenAta.NewCreateIdempotentInstructionWithTokenProgram(
 				payer,
-				ataAddress,
 				transfer.Destination,
 				mint,
-				system.ProgramID,
 				solana.TokenProgramID,
 			).Build(),
 		)
@@ -341,12 +340,10 @@ func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder 
 	src := FindAssociatedTokenAddress(source, transfer.Mint, tokenProgram)
 	dst := FindAssociatedTokenAddress(transfer.Destination, transfer.Mint, tokenProgram)
 	builder.AddInstruction(
-		NewCreateIdempotentInstruction(
+		tokenAta.NewCreateIdempotentInstructionWithTokenProgram(
 			payer,
-			dst,
 			transfer.Destination,
 			transfer.Mint,
-			system.ProgramID,
 			tokenProgram,
 		).Build(),
 	)
