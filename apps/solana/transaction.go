@@ -15,6 +15,7 @@ import (
 	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
+	token2022 "github.com/gagliardetto/solana-go/programs/token-2022"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/shopspring/decimal"
 )
@@ -363,7 +364,7 @@ func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder 
 		)
 	case tokenProgram.Equals(solana.Token2022ProgramID):
 		builder.AddInstruction(
-			NewToken2022TransferCheckedInstruction(
+			token2022.NewTransferCheckedInstruction(
 				transfer.Amount,
 				transfer.Decimals,
 				src,
