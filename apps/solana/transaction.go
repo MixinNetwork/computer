@@ -543,8 +543,9 @@ func ExtractMemoFromTransaction(ctx context.Context, tx *solana.Transaction, met
 			panic(err)
 		}
 		if memo, err := DecodeMemo(accounts, ins.Data); err == nil {
-			if memo.GetSigner().PublicKey.String() == payer.String() {
-				return string(memo.Message)
+			signer := memo.GetSigner()
+			if signer != nil && signer.PublicKey.Equals(payer) {
+				return strings.TrimPrefix(string(memo.Message), "$")
 			}
 		}
 	}
