@@ -10,8 +10,8 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/messenger"
 	"github.com/MixinNetwork/safe/mtg"
-	"github.com/fox-one/mixin-sdk-go/v2"
-	"github.com/fox-one/mixin-sdk-go/v2/mixinnet"
+	"github.com/fox-one/mixin-sdk-go/v3"
+	"github.com/fox-one/mixin-sdk-go/v3/mixinnet"
 	"github.com/urfave/cli/v2"
 )
 

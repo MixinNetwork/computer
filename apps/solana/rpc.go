@@ -46,7 +46,7 @@ func (c *Client) RPCGetConfirmedHeight(ctx context.Context) (uint64, error) {
 	for {
 		block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentConfirmed)
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
@@ -65,13 +65,14 @@ func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.G
 			TransactionDetails:             rpc.TransactionDetailsFull,
 		})
 		if mtg.CheckRetryableError(err) || errors.Is(err, rpc.ErrNotFound) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
 			errStr := err.Error()
-			if strings.Contains(errStr, "Block not available for slot") || strings.Contains(errStr, "Block status not yet available for slot") {
-				time.Sleep(1 * time.Second)
+			if strings.Contains(errStr, "Block not available for slot") ||
+				strings.Contains(errStr, "Block status not yet available for slot") {
+				time.Sleep(time.Millisecond * 300)
 				continue
 			}
 			return nil, fmt.Errorf("solana.RPCGetBlockByHeight(%d) => %v", height, err)
@@ -99,7 +100,7 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 			Commitment: rpc.CommitmentProcessed,
 		})
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
@@ -138,7 +139,7 @@ func (c *Client) RPCGetBalance(ctx context.Context, account solana.PublicKey) (u
 	for {
 		result, err := c.rpcClient.GetBalance(ctx, account, rpc.CommitmentProcessed)
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
@@ -154,7 +155,7 @@ func (c *Client) RPCGetAccount(ctx context.Context, account solana.PublicKey) (*
 			Commitment: rpc.CommitmentProcessed,
 		})
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil && !errors.Is(err, rpc.ErrNotFound) {
@@ -170,7 +171,7 @@ func (c *Client) RPCGetMultipleAccounts(ctx context.Context, accounts solana.Pub
 			Commitment: rpc.CommitmentProcessed,
 		})
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
@@ -192,7 +193,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 			},
 		)
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil && strings.Contains(err.Error(), "not found") {
@@ -200,7 +201,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 				return nil, nil
 			}
 			retry -= 1
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil || r.Meta == nil {
@@ -215,7 +216,7 @@ func (c *Client) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataS
 	for {
 		r, err := c.rpcClient.GetMinimumBalanceForRentExemption(ctx, dataSize, rpc.CommitmentProcessed)
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
@@ -231,7 +232,7 @@ func (c *Client) RPCGetTokenAccountsByOwner(ctx context.Context, owner solana.Pu
 			ProgramId: &token.ProgramID,
 		}, nil)
 		if mtg.CheckRetryableError(err) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {

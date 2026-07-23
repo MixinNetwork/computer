@@ -88,10 +88,7 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 	}
 
 	var start int
-	for {
-		if start >= len(accounts) {
-			break
-		}
+	for start < len(accounts) {
 		var alt string
 		table, err := node.getAvailableALT(ctx)
 		if err != nil {
@@ -128,7 +125,7 @@ func (node *Node) ExtendLookupTable(ctx context.Context, as []string) error {
 
 func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 	for {
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 300)
 		checkpoint, err := node.readSolanaBlockCheckpoint(ctx)
 		if err != nil {
 			panic(err)
@@ -136,7 +133,7 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 		height, err := node.solana.RPCGetConfirmedHeight(ctx)
 		if err != nil {
 			logger.Printf("solana.RPCGetBlockHeight => %v", err)
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second)
 			continue
 		}
 		batch := min(int64(height)-checkpoint, 30)
@@ -438,7 +435,7 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 			return "", "", err
 		}
 		if hash == nil {
-			time.Sleep(5 * time.Second)
+			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		return nonce.PublicKey().String(), hash.String(), nil

@@ -40,7 +40,7 @@ func (node *Node) bootSigner(ctx context.Context) {
 
 func (node *Node) loopInitialSessions(ctx context.Context) {
 	for {
-		time.Sleep(3 * time.Second)
+		time.Sleep(time.Millisecond * 500)
 		node.handleInitialSessions(ctx)
 	}
 }
@@ -79,7 +79,7 @@ func (node *Node) handleInitialSessions(ctx context.Context) {
 
 func (node *Node) loopPreparedSessions(ctx context.Context) {
 	for {
-		time.Sleep(3 * time.Second)
+		time.Sleep(time.Millisecond * 500)
 		synced := node.synced(ctx)
 		if !synced {
 			logger.Printf("group.Synced(%s) => %t", node.group.GenesisId(), synced)
@@ -136,7 +136,7 @@ func (node *Node) listPreparedSessions(ctx context.Context) []*store.Session {
 
 func (node *Node) loopPendingSessions(ctx context.Context) {
 	for {
-		time.Sleep(3 * time.Second)
+		time.Sleep(time.Millisecond * 500)
 		synced := node.synced(ctx)
 		if !synced {
 			logger.Printf("group.Synced(%s) => %t", node.group.GenesisId(), synced)

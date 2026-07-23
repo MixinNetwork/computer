@@ -31,7 +31,7 @@ func (node *Node) checkCreatedAtaUntilSufficient(ctx context.Context, tx *solana
 			if acc != nil {
 				break
 			}
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 300)
 		}
 	}
 	return nil
@@ -47,7 +47,7 @@ func (node *Node) checkMintsUntilSufficient(ctx context.Context, ts []*solanaApp
 			if acc != nil {
 				break
 			}
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 300)
 		}
 	}
 	return nil
@@ -65,7 +65,8 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 		rpcTx, err := node.RPCGetTransaction(ctx, hash)
 		logger.Printf("solana.RPCGetTransaction(%s) => %v %v", hash, rpcTx, err)
 		if err != nil {
-			time.Sleep(time.Second * 3)
+			time.Sleep(time.Millisecond * 300)
+			continue
 		}
 		if rpcTx != nil {
 			if rpcTx.Meta.Err != nil {
@@ -77,7 +78,7 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 		sig, sendError := node.solana.SendTransaction(ctx, tx)
 		logger.Printf("solana.SendTransaction(%s) => %s %v", id, sig, sendError)
 		if sendError == nil || strings.Contains(sendError.Error(), "This transaction has already been processed") {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 			continue
 		}
 		// retry when observer send tx without nonce account
@@ -87,7 +88,7 @@ func (node *Node) SendTransactionUtilConfirm(ctx context.Context, tx *solana.Tra
 				return nil, sendError
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
 }
 

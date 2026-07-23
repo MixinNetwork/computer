@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	loopInterval     = time.Second * 5
+	loopInterval     = time.Second
 	mpcRetryInterval = time.Minute * 5
 	BalanceLimit     = 500000000
 )
@@ -334,7 +334,7 @@ func (node *Node) refreshAssetsLoop(ctx context.Context) {
 			panic(err)
 		}
 
-		time.Sleep(time.Minute)
+		time.Sleep(loopInterval)
 	}
 }
 
@@ -345,7 +345,7 @@ func (node *Node) notificationLoop(ctx context.Context) {
 			panic(err)
 		}
 
-		time.Sleep(time.Minute)
+		time.Sleep(loopInterval)
 	}
 }
 
@@ -507,7 +507,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 				panic(err)
 			}
 			if newNonceHash.String() == nonce.Hash {
-				time.Sleep(3 * time.Second)
+				time.Sleep(time.Second)
 				continue
 			}
 			err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
