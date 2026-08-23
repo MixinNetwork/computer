@@ -23,10 +23,7 @@ func (node *Node) ProcessOutput(ctx context.Context, out *mtg.Action) ([]*mtg.Tr
 	if out.SequencerCreatedAt.IsZero() {
 		panic(out.OutputId)
 	}
-	txs1, asset1 := node.processAction(ctx, out)
-	txs2, asset2 := node.processAction(ctx, out)
-	mtg.ReplayCheck(out, txs1, txs2, asset1, asset2)
-	return txs1, asset1
+	return node.processAction(ctx, out)
 }
 
 func (node *Node) processAction(ctx context.Context, out *mtg.Action) ([]*mtg.Transaction, string) {
