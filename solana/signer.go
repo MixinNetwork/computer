@@ -204,20 +204,21 @@ func (node *Node) loopPendingSessions(ctx context.Context) {
 func (node *Node) acceptIncomingMessages(ctx context.Context) {
 	for {
 		mm, err := node.network.ReceiveMessage(ctx)
-		logger.Debugf("network.ReceiveMessage() => %s %x %s %v", mm.Peer, mm.Data, mm.CreatedAt, err)
 		if err != nil {
 			panic(err)
 		}
+		logger.Debugf("network.ReceiveMessage() => %s %x %s %v", mm.Peer, mm.Data, mm.CreatedAt, err)
 		err = node.writeRequestTime(ctx, store.MPCMessageTimeKey, mm.CreatedAt)
 		if err != nil {
 			panic(err)
 		}
 
 		sessionId, msg, err := unmarshalSessionMessage(mm.Data)
-		logger.Verbosef("node.acceptIncomingMessages(%x, %d) => %s %s %x", sessionId, msg.RoundNumber, mm.Peer, mm.CreatedAt, msg.SSID)
 		if err != nil {
+			logger.Printf("node.unmarshalSessionMessage(%x) => %v", mm.Data, err)
 			continue
 		}
+		logger.Verbosef("node.acceptIncomingMessages(%x, %d) => %s %s %x", sessionId, msg.RoundNumber, mm.Peer, mm.CreatedAt, msg.SSID)
 		if msg.SSID == nil {
 			continue
 		}
@@ -414,7 +415,7 @@ func (node *Node) getSession(sessionId []byte) *MultiPartySession {
 }
 
 func marshalSessionMessage(sessionId []byte, msg *protocol.Message) []byte {
-	if len(sessionId) > 32 {
+	if len(sessionId) != uuid.Size {
 		panic(hex.EncodeToString(sessionId))
 	}
 	msb := []byte{byte(len(sessionId))}
@@ -423,15 +424,15 @@ func marshalSessionMessage(sessionId []byte, msg *protocol.Message) []byte {
 }
 
 func unmarshalSessionMessage(b []byte) ([]byte, *protocol.Message, error) {
-	if len(b) < 16 {
+	if len(b) < 1 || int(b[0]) != uuid.Size {
 		return nil, nil, fmt.Errorf("unmarshalSessionMessage(%x) short", b)
 	}
-	if len(b[1:]) <= int(b[0]) {
+	if len(b) <= 1+uuid.Size {
 		return nil, nil, fmt.Errorf("unmarshalSessionMessage(%x) short", b)
 	}
-	sessionId := b[1 : 1+b[0]]
+	sessionId := b[1 : 1+uuid.Size]
 	var msg protocol.Message
-	err := msg.UnmarshalBinary(b[1+b[0]:])
+	err := msg.UnmarshalBinary(b[1+uuid.Size:])
 	return sessionId, &msg, err
 }
 
@@ -591,6 +592,10 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) != uuid.Size+ed25519.PublicKeySize {
+		logger.Printf("invalid extra length for keygen result: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	sid := uuid.FromBytesOrNil(extra[:16]).String()
 	public := extra[16:]
 
@@ -598,6 +603,10 @@ func (node *Node) processSignerKeygenResults(ctx context.Context, req *store.Req
 	logger.Printf("store.ReadSession(%s) => %v %v", sid, s, err)
 	if err != nil {
 		panic(err)
+	}
+	if s == nil || s.Operation != OperationTypeKeygenInput {
+		logger.Printf("invalid keygen session: %v", s)
+		return node.failRequest(ctx, req, "")
 	}
 
 	sender := req.Output.Senders[0]
@@ -690,6 +699,10 @@ func (node *Node) processSignerPrepare(ctx context.Context, req *store.Request) 
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) != uuid.Size+len(PrepareExtra) {
+		logger.Printf("invalid extra length for signer prepare: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	session := uuid.Must(uuid.FromBytes(extra[:16])).String()
 	extra = extra[16:]
 	if !bytes.Equal(extra, PrepareExtra) {
@@ -736,15 +749,27 @@ func (node *Node) processSignerSignatureResponse(ctx context.Context, req *store
 		panic(req.Action)
 	}
 	extra := req.ExtraBytes()
+	if len(extra) != uuid.Size && len(extra) != uuid.Size+ed25519.SignatureSize {
+		logger.Printf("invalid extra length for signature response: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	sid := uuid.FromBytesOrNil(extra[:16]).String()
 	signature := extra[16:]
 	s, err := node.store.ReadSession(ctx, sid)
-	if err != nil || s == nil {
+	if err != nil {
 		panic(fmt.Errorf("store.ReadSession(%s) => %v %v", sid, s, err))
 	}
+	if s == nil || s.Operation != OperationTypeSignInput {
+		logger.Printf("invalid sign session: %v", s)
+		return node.failRequest(ctx, req, "")
+	}
 	call, err := node.store.ReadSystemCallByRequestId(ctx, s.RequestId, 0)
-	if err != nil || call == nil {
+	if err != nil {
 		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", s.RequestId, call, err))
+	}
+	if call == nil {
+		logger.Printf("invalid call for sign session: %v", s)
+		return node.failRequest(ctx, req, "")
 	}
 	if call.Signature.Valid || call.State != common.RequestStatePending {
 		logger.Printf("invalid call %s: %d %s", call.RequestId, call.State, call.Signature.String)

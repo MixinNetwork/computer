@@ -291,6 +291,10 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) < 1+uuid.Size {
+		logger.Printf("invalid extra length for confirm nonce: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	flag, extra := extra[0], extra[1:]
 	callId := uuid.Must(uuid.FromBytes(extra[0:16])).String()
 
@@ -428,6 +432,15 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 
 	var as []*solanaApp.DeployedAsset
 	extra := req.ExtraBytes()
+	if len(extra) < 1 {
+		logger.Printf("invalid extra length for deploy external assets: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
+	assetSize := uuid.Size + solana.PublicKeyLength
+	if len(extra) != 1+int(extra[0])*assetSize {
+		logger.Printf("invalid extra length for deploy external assets: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	n, extra := extra[0], extra[1:]
 	offset := 0
 	for len(as) < int(n) {
@@ -489,13 +502,25 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) < 1 {
+		logger.Printf("invalid extra length for confirm call: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	flag, extra := extra[0], extra[1:]
 
 	switch flag {
 	case FlagConfirmCallSuccess:
+		if len(extra) < 1 {
+			logger.Printf("invalid extra length for successful confirm call: %d", len(extra))
+			return node.failRequest(ctx, req, "")
+		}
 		n, extra := int(extra[0]), extra[1:]
 		if n == 0 || n > 2 {
 			logger.Printf("invalid length of signature: %d", n)
+			return node.failRequest(ctx, req, "")
+		}
+		if len(extra) < n*solana.SignatureLength {
+			logger.Printf("invalid signature payload length: %d %d", len(extra), n)
 			return node.failRequest(ctx, req, "")
 		}
 
@@ -572,6 +597,10 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		}
 		return nil, ""
 	case FlagConfirmCallFail:
+		if len(extra) < uuid.Size {
+			logger.Printf("invalid extra length for failed confirm call: %d", len(extra))
+			return node.failRequest(ctx, req, "")
+		}
 		callId := uuid.Must(uuid.FromBytes(extra[:16])).String()
 		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
 		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
@@ -594,6 +623,10 @@ func (node *Node) processObserverRequestSign(ctx context.Context, req *store.Req
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) != uuid.Size {
+		logger.Printf("invalid extra length for sign request: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	callId := uuid.Must(uuid.FromBytes(extra[:16])).String()
 	call, err := node.store.ReadSystemCallByRequestId(ctx, callId, common.RequestStatePending)
 	logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
@@ -645,6 +678,10 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 	}
 
 	extra := req.ExtraBytes()
+	if len(extra) < solana.PublicKeyLength+solana.SignatureLength {
+		logger.Printf("invalid extra length for deposit call: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	userAddress := solana.PublicKeyFromBytes(extra[:32])
 	signature := solana.SignatureFromBytes(extra[32:96])
 
@@ -873,19 +910,23 @@ func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, 
 }
 
 func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall) ([]*mtg.Transaction, string) {
+	if call == nil {
+		return node.failRequest(ctx, req, "")
+	}
+	extra := req.ExtraBytes()
+	if len(extra) < 1+uuid.Size {
+		logger.Printf("invalid extra length for failed system call: %d", len(extra))
+		return node.failRequest(ctx, req, "")
+	}
 	switch call.State {
 	case common.RequestStatePending, common.RequestStateFailed:
 	default:
 		return node.failRequest(ctx, req, "")
 	}
 
-	extra := req.ExtraBytes()
 	flag, extra := extra[0], extra[1:]
 
 	storage := extra[16:]
-	if call == nil {
-		panic(req)
-	}
 	if flag == FlagConfirmCallSuccess {
 		storage = nil
 	}
