@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -298,7 +299,7 @@ func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Requ
 	return node.buildSystemCallFromBytes(ctx, req, id, raw, true)
 }
 
-// should only return error when fail to parse nonce advance instruction;
+// should only return error when fail to resolve address lookups or parse nonce advance instruction;
 // without fields of superior, type, public, skip_postprocess
 func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Request, id string, raw []byte, withdrawn bool) (*store.SystemCall, *solana.Transaction, error) {
 	tx, err := solana.TransactionFromBytes(raw)
@@ -308,6 +309,9 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
 	if err != nil {
+		if errors.Is(err, errInvalidAddressLookup) {
+			return nil, nil, err
+		}
 		panic(err)
 	}
 	advance, err := solanaApp.NonceAccountFromTx(tx)

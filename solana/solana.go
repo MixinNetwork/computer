@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -31,6 +32,8 @@ const (
 	SolanaBlockDelay = 1
 	SolanaTxRetry    = 10
 )
+
+var errInvalidAddressLookup = errors.New("invalid address lookup")
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
 	for {
@@ -703,23 +706,23 @@ func (node *Node) processTransactionWithAddressLookups(ctx context.Context, txx 
 	}
 	for index, info := range infos.Value {
 		if info == nil {
-			return fmt.Errorf("get account info: not found")
+			return fmt.Errorf("%w: get account info: not found", errInvalidAddressLookup)
 		}
 		key := tblKeys[index]
 		tableContent, err := lookup.DecodeAddressLookupTableState(info.Data.GetBinary())
 		if err != nil {
-			return fmt.Errorf("decode address lookup table state: %s %w", key, err)
+			return fmt.Errorf("%w: decode address lookup table state: %s %v", errInvalidAddressLookup, key, err)
 		}
 
 		resolutions[key] = tableContent.Addresses
 	}
 
 	if err := txx.Message.SetAddressTables(resolutions); err != nil {
-		return fmt.Errorf("set address tables: %w", err)
+		return fmt.Errorf("%w: set address tables: %v", errInvalidAddressLookup, err)
 	}
 
 	if err := txx.Message.ResolveLookups(); err != nil {
-		return fmt.Errorf("resolve lookups: %w ", err)
+		return fmt.Errorf("%w: resolve lookups: %v", errInvalidAddressLookup, err)
 	}
 
 	return nil
