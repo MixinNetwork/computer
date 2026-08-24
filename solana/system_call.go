@@ -272,7 +272,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
 	}

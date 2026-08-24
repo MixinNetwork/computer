@@ -954,7 +954,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
+		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
 		if err != nil {
 			panic(err)
 		}
