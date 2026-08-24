@@ -466,13 +466,16 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 			return node.failRequest(ctx, req, "")
 		}
 		if !common.CheckTestEnvironment(ctx) { // TODO should not skip the test
-			mint, err := node.RPCGetAsset(ctx, address)
-			if err != nil || mint == nil ||
-				mint.Decimals != uint32(solanaApp.AssetDecimal) ||
-				mint.MintAuthority != node.getMTGAddress(ctx).String() ||
-				mint.FreezeAuthority != "" {
-				// TODO check symbol and name
-				panic(fmt.Errorf("solana.RPCGetAsset(%s) => %v", address, mint))
+			// Deployment validation must use current on-chain state. The general
+			// asset lookup is cached and could otherwise preserve a stale supply.
+			mint, err := node.solana.RPCGetAsset(ctx, address)
+			if err != nil {
+				panic(fmt.Errorf("solana.RPCGetAsset(%s) => %v", address, err))
+			}
+			err = validateExternalAssetMint(address, node.getMTGAddress(ctx).String(), mint)
+			if err != nil {
+				logger.Printf("validateExternalAssetMint(%s) => %v", address, err)
+				return node.failRequest(ctx, req, "")
 			}
 		}
 		as = append(as, &solanaApp.DeployedAsset{
@@ -491,6 +494,36 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 		panic(err)
 	}
 	return nil, ""
+}
+
+func validateExternalAssetMint(address, mtg string, mint *solanaApp.Asset) error {
+	if mint == nil {
+		return fmt.Errorf("mint not found")
+	}
+	if mint.Address != address {
+		return fmt.Errorf("invalid address: %s", mint.Address)
+	}
+	if mint.ProgramId != solana.TokenProgramID.String() {
+		return fmt.Errorf("invalid program: %s", mint.ProgramId)
+	}
+	if !mint.IsInitialized {
+		return fmt.Errorf("mint is not initialized")
+	}
+	if mint.Decimals != uint32(solanaApp.AssetDecimal) {
+		return fmt.Errorf("invalid decimals: %d", mint.Decimals)
+	}
+	if mint.MintAuthority != mtg {
+		return fmt.Errorf("invalid mint authority: %s", mint.MintAuthority)
+	}
+	if mint.FreezeAuthority != "" {
+		return fmt.Errorf("invalid freeze authority: %s", mint.FreezeAuthority)
+	}
+
+	supply, ok := new(big.Int).SetString(mint.Supply, 10)
+	if !ok || supply.Sign() != 0 {
+		return fmt.Errorf("invalid initial supply: %s", mint.Supply)
+	}
+	return nil
 }
 
 func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([]*mtg.Transaction, string) {

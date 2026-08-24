@@ -37,7 +37,10 @@ type AssetMetadata struct {
 type Asset struct {
 	Address         string `json:"address"`
 	Id              string `json:"id"`
+	ProgramId       string `json:"program_id"`
+	Supply          string `json:"supply"`
 	Decimals        uint32 `json:"decimals"`
+	IsInitialized   bool   `json:"is_initialized"`
 	MintAuthority   string `json:"mint_authority"`
 	FreezeAuthority string `json:"freeze_authority"`
 }
@@ -106,14 +109,17 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 		if err != nil {
 			return nil, fmt.Errorf("solana.RPCGetAsset(%s) => %v", address, err)
 		}
+		if account == nil || account.Value == nil {
+			return nil, nil
+		}
 		data, err := account.Value.Data.MarshalJSON()
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("solana.RPCGetAsset(%s) marshal => %v", address, err)
 		}
 		var mint MintData
 		err = json.Unmarshal(data, &mint)
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("solana.RPCGetAsset(%s) unmarshal => %v", address, err)
 		}
 
 		mintAuthority := ""
@@ -127,7 +133,10 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 		asset := &Asset{
 			Address:         address,
 			Id:              GenerateAssetId(address),
+			ProgramId:       account.Value.Owner.String(),
+			Supply:          mint.Parsed.Info.Supply,
 			Decimals:        uint32(mint.Parsed.Info.Decimals),
+			IsInitialized:   mint.Parsed.Info.IsInitialized,
 			MintAuthority:   mintAuthority,
 			FreezeAuthority: freezeAuthority,
 		}

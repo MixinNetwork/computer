@@ -884,7 +884,7 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 		switch programKey {
 		case system.ProgramID:
 			if _, ok := solanaApp.DecodeCreateAccount(accounts, ix.Data); ok {
-				continue
+				return fmt.Errorf("create account is not allowed in subsystem call")
 			}
 			if transfer, ok := solanaApp.DecodeSystemTransfer(accounts, ix.Data); ok {
 				recipient := transfer.GetRecipientAccount().PublicKey
