@@ -52,16 +52,19 @@ func (node *Node) processAddUser(ctx context.Context, req *store.Request) ([]*mt
 	}
 
 	mix := string(req.ExtraBytes())
-	_, err = bot.NewMixAddressFromString(mix)
-	logger.Printf("common.NewAddressFromString(%s) => %v", mix, err)
+	mmix, err := bot.NewMixAddressFromString(mix)
+	logger.Printf("bot.NewMixAddressFromString(%s) => %v", mix, err)
 	if err != nil {
+		return node.failRequest(ctx, req, "")
+	}
+	if !checkUser(ctx, req, mmix) {
 		return node.failRequest(ctx, req, "")
 	}
 
 	old, err := node.store.ReadUserByMixAddress(ctx, mix)
-	logger.Printf("store.ReadUserByAddress(%s) => %v %v", mix, old, err)
+	logger.Printf("store.ReadUserByMixAddress(%s) => %v %v", mix, old, err)
 	if err != nil {
-		panic(fmt.Errorf("store.ReadUserByAddress(%s) => %v", mix, err))
+		panic(fmt.Errorf("store.ReadUserByMixAddress(%s) => %v", mix, err))
 	} else if old != nil {
 		return node.failRequest(ctx, req, "")
 	}
@@ -105,6 +108,13 @@ func (node *Node) processUserDeposit(ctx context.Context, req *store.Request) ([
 	if err != nil {
 		panic(fmt.Errorf("store.ReadUser() => %v", err))
 	} else if user == nil {
+		return node.failRequest(ctx, req, "")
+	}
+	mix, err := bot.NewMixAddressFromString(user.MixAddress)
+	if err != nil {
+		panic(err)
+	}
+	if !checkUser(ctx, req, mix) {
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -198,8 +208,7 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil {
 		panic(err)
 	}
-	if !common.CheckTestEnvironment(ctx) &&
-		(mix.Threshold != byte(req.Output.SendersThreshold) || bot.HashMembers(mix.Members()) != req.Output.SendersHash) {
+	if !checkUser(ctx, req, mix) {
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -236,7 +245,7 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 		panic(err)
 	}
 	if old != nil {
-		logger.Printf("store.ReadSystemCallByRequestId(%s) => %s", cid, old)
+		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v", cid, old)
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -1102,4 +1111,12 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		panic(err)
 	}
 	return txs, ""
+}
+
+func checkUser(ctx context.Context, req *store.Request, mix *bot.MixAddress) bool {
+	if common.CheckTestEnvironment(ctx) {
+		return true
+	}
+
+	return mix.Threshold == byte(req.Output.SendersThreshold) && bot.HashMembers(mix.Members()) == req.Output.SendersHash
 }
