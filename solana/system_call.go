@@ -74,7 +74,7 @@ func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, reques
 		if storage == nil {
 			storage = hash
 		} else if storage.String() != hash.String() {
-			panic(storage.String())
+			return nil, nil, fmt.Errorf("multiple storage references: %s != %s", storage.String(), hash.String())
 		}
 	}
 	return outputs, storage, nil

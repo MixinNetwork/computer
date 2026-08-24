@@ -1197,6 +1197,7 @@ func checkUser(ctx context.Context, req *store.Request, mix *bot.MixAddress) boo
 	if common.CheckTestEnvironment(ctx) {
 		return true
 	}
-
-	return mix.Threshold == byte(req.Output.SendersThreshold) && bot.HashMembers(mix.Members()) == req.Output.SendersHash
+	senders := append([]string(nil), req.Output.Senders...)
+	return mix.Threshold == byte(req.Output.SendersThreshold) &&
+		bot.HashMembers(mix.Members()) == bot.HashMembers(senders)
 }
