@@ -228,8 +228,16 @@ func (node *Node) RPCCheckNFT(ctx context.Context, account string) (bool, error)
 	if err != nil {
 		return false, err
 	}
+	return isNFTAccount(acc)
+}
+
+func isNFTAccount(acc *rpc.GetAccountInfoResult) (bool, error) {
+	data := acc.GetBinary()
+	if len(data) == 0 {
+		return false, nil
+	}
 	var tm token.Mint
-	err = bin.NewBinDecoder(acc.Value.Data.GetBinary()).Decode(&tm)
+	err := bin.NewBinDecoder(data).Decode(&tm)
 	if err != nil {
 		return false, fmt.Errorf("solana.NewBinDecoder() => %v", err)
 	}
