@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"slices"
 	"strings"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
@@ -199,10 +198,8 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil {
 		panic(err)
 	}
-	if !slices.ContainsFunc(mix.Members(), func(m string) bool {
-		return slices.Contains(req.Output.Senders, m)
-	}) && !common.CheckTestEnvironment(ctx) {
-		// TODO use better and general authentication without MM api
+	if !common.CheckTestEnvironment(ctx) &&
+		(mix.Threshold != byte(req.Output.SendersThreshold) || bot.HashMembers(mix.Members()) != req.Output.SendersHash) {
 		return node.failRequest(ctx, req, "")
 	}
 
