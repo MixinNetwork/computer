@@ -217,6 +217,13 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil || storage == nil {
 		return node.failRequest(ctx, req, "")
 	}
+	// External-asset deployments are MTG consensus state and can be checked
+	// deterministically before the call is persisted.
+	err = node.validateSystemCallReferencedAssets(ctx, os)
+	if err != nil {
+		logger.Printf("node.validateSystemCallReferencedAssets(%s) => %v", req.Id, err)
+		return node.failRequest(ctx, req, "")
+	}
 
 	cid := uuid.Must(uuid.FromBytes(data[8:24])).String()
 	skipPostProcess := false
@@ -325,10 +332,9 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	if err != nil {
 		panic(err)
 	}
-	as := node.GetSystemCallRelatedAsset(ctx, os)
-
 	switch flag {
 	case ConfirmFlagNonceAvailable:
+		as := node.GetSystemCallRelatedAsset(ctx, os)
 		var sessions []*store.Session
 		prepare, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[16:])
 		if err != nil {
@@ -933,7 +939,7 @@ func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compa
 }
 
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {
-	as := node.GetSystemCallRelatedAsset(ctx, os)
+	as := aggregateSystemCallReferenceAssets(os)
 	txs, compaction := node.buildRefundTxs(ctx, req, call.RequestId, as, members, threshod)
 	err := node.store.RefundOutputsWithRequest(ctx, req, call, os, txs, compaction)
 	if err != nil {

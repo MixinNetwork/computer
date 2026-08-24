@@ -602,11 +602,29 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 		extra := []byte{ConfirmFlagNonceAvailable}
 		extra = append(extra, uuid.Must(uuid.FromString(call.RequestId)).Bytes()...)
 
+		failureReason := ""
 		if nonce == nil || !nonce.Valid(call.RequestId) {
-			logger.Printf("observer.expireSystemCall(%v %v %v)", call, nonce, err)
+			failureReason = "expired or invalid nonce"
+		} else {
+			req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
+			if err != nil {
+				return err
+			}
+			os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+			if err != nil {
+				return err
+			}
+			err = node.validateSystemCallParameters(ctx, req, os)
+			if err != nil {
+				failureReason = err.Error()
+			}
+		}
+
+		if failureReason != "" {
+			logger.Printf("observer.expireSystemCall(%v %v %s)", call, nonce, failureReason)
 			id = common.UniqueId(id, "expire-nonce")
 			extra[0] = ConfirmFlagNonceExpired
-			err = node.store.WriteFailedCallIfNotExist(ctx, call, "expired or invalid nonce")
+			err = node.store.WriteFailedCallIfNotExist(ctx, call, failureReason)
 			if err != nil {
 				return err
 			}

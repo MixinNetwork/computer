@@ -136,6 +136,25 @@ func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string
 // be used to create prepare call by observer with fee from payer (isolatedFee = true)
 // be used to create post call by observer with fee to calculate rest SOL
 func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.UserOutput) []*ReferencedTxAsset {
+	assets := aggregateSystemCallReferenceAssets(os)
+	for _, asset := range assets {
+		if asset.Solana {
+			continue
+		}
+		deployed, err := node.store.ReadDeployedAsset(ctx, asset.AssetId)
+		if err != nil || deployed == nil {
+			panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v %v", asset.AssetId, deployed, err))
+		}
+		asset.Address = deployed.Address
+		asset.Decimal = solanaApp.AssetDecimal
+	}
+	return assets
+}
+
+// Aggregate asset identity and amount without requiring a Solana mint mapping.
+// GetSystemCallRelatedAsset fills that mapping for Solana transactions, while
+// failed calls can use the aggregate directly for Mixin refunds.
+func aggregateSystemCallReferenceAssets(os []*store.UserOutput) []*ReferencedTxAsset {
 	am := make(map[string]*ReferencedTxAsset)
 	for _, output := range os {
 		logger.Printf("node.GetReferencedTxAsset() => %v", output)
@@ -144,11 +163,7 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 		address := output.Asset.AssetKey
 		decimal := output.Asset.Precision
 		if !isSolAsset {
-			da, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
-			if err != nil || da == nil {
-				panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v %v", output.AssetId, da, err))
-			}
-			address = da.Address
+			address = ""
 			decimal = solanaApp.AssetDecimal
 		}
 		ra := &ReferencedTxAsset{
@@ -176,26 +191,68 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 	return assets
 }
 
-// should only return error when no valid fees found
-func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.SystemCall) (*store.UserOutput, error) {
-	req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
+func (node *Node) validateSystemCallParameters(ctx context.Context, req *store.Request, os []*store.UserOutput) error {
+	if req == nil {
+		return fmt.Errorf("missing system call request")
+	}
+	_, err := node.readSystemCallFeeInfo(ctx, req)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	extra := req.ExtraBytes()
-	if len(extra) != 41 {
-		return nil, nil
-	}
-	feeId := uuid.Must(uuid.FromBytes(extra[25:])).String()
+	return node.validateSystemCallReferencedAssets(ctx, os)
+}
 
-	var fee *store.FeeInfo
-	fee, err = node.store.ReadFeeInfoById(ctx, feeId)
+func (node *Node) validateSystemCallReferencedAssets(ctx context.Context, os []*store.UserOutput) error {
+	checked := make(map[string]bool)
+	for _, output := range os {
+		if output.ChainId == solanaApp.SolanaChainBase || checked[output.AssetId] {
+			continue
+		}
+		checked[output.AssetId] = true
+		deployed, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
+		if err != nil {
+			panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v", output.AssetId, err))
+		}
+		if deployed == nil {
+			return fmt.Errorf("external asset is not deployed: %s", output.AssetId)
+		}
+	}
+	return nil
+}
+
+func (node *Node) readSystemCallFeeInfo(ctx context.Context, req *store.Request) (*store.FeeInfo, error) {
+	extra := req.ExtraBytes()
+	switch len(extra) {
+	case 25:
+		return nil, nil
+	case 41:
+	default:
+		return nil, fmt.Errorf("invalid system call extra length: %d", len(extra))
+	}
+
+	feeId := uuid.Must(uuid.FromBytes(extra[25:])).String()
+	fee, err := node.store.ReadFeeInfoById(ctx, feeId)
 	logger.Printf("store.ReadFeeInfoById(%s) => %v %v", feeId, fee, err)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("store.ReadFeeInfoById(%s) => %v", feeId, err))
 	}
 	if fee == nil { // TODO check fee timestamp against the call timestamp not too old
 		return nil, fmt.Errorf("invalid fee id: %s", feeId)
+	}
+	return fee, nil
+}
+
+// should only return error when no valid fees found
+func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.SystemCall) (*store.UserOutput, error) {
+	req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
+	if err != nil || req == nil {
+		panic(fmt.Errorf("store.ReadRequestByHash(%s) => %v %v", call.RequestHash, req, err))
+	}
+	fee, err := node.readSystemCallFeeInfo(ctx, req)
+	if err != nil {
+		return nil, err
+	} else if fee == nil {
+		return nil, nil
 	}
 
 	ratio := decimal.RequireFromString(fee.Ratio)
