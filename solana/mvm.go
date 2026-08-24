@@ -231,6 +231,15 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 		return node.failRequest(ctx, req, "")
 	}
 
+	old, err := node.store.ReadSystemCallByRequestId(ctx, cid, 0)
+	if err != nil {
+		panic(err)
+	}
+	if old != nil {
+		logger.Printf("store.ReadSystemCallByRequestId(%s) => %s", cid, old)
+		return node.failRequest(ctx, req, "")
+	}
+
 	rb := node.readStorageExtraFromObserver(ctx, *storage)
 	call, tx, err := node.buildSystemCallFromBytes(ctx, req, cid, rb, false)
 	if err != nil {
@@ -241,7 +250,7 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	call.Public = hex.EncodeToString(user.FingerprintWithPath())
 	call.SkipPostProcess = skipPostProcess
 
-	old, err := node.store.ReadSystemCallByMessage(ctx, call.MessageHash)
+	old, err = node.store.ReadSystemCallByMessage(ctx, call.MessageHash)
 	if err != nil {
 		panic(err)
 	}
