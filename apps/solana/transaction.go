@@ -388,12 +388,19 @@ func (c *Client) getPriorityFeeInstruction(ctx context.Context) *computebudget.I
 	if err != nil {
 		panic(err)
 	}
+	fee := getAveragePriorityFee(recentFees)
+	return computebudget.NewSetComputeUnitPriceInstruction(fee).Build()
+}
+
+func getAveragePriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
+	if len(recentFees) == 0 {
+		return 1000
+	}
 	total := decimal.NewFromInt(0)
 	for _, fee := range recentFees {
 		total = total.Add(decimal.NewFromUint64(fee.PrioritizationFee))
 	}
-	fee := total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
-	return computebudget.NewSetComputeUnitPriceInstruction(fee).Build()
+	return total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
 }
 
 func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, exception *solana.PublicKey) ([]*Transfer, error) {
