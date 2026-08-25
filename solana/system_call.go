@@ -198,6 +198,11 @@ func aggregateSystemCallReferenceAssets(os []*store.UserOutput) []*ReferencedTxA
 		}
 		assets = append(assets, a)
 	}
+	// Callers persist the ordered transactions and select the first asset with
+	// insufficient balance for compaction, so map iteration order is unsafe here.
+	slices.SortFunc(assets, func(a, b *ReferencedTxAsset) int {
+		return strings.Compare(a.AssetId, b.AssetId)
+	})
 	return assets
 }
 

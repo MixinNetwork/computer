@@ -205,7 +205,8 @@ func (node *Node) buildRefundTxs(ctx context.Context, req *store.Request, id str
 		trace := common.UniqueId(id, memo)
 		t := node.buildTransaction(ctx, req.Output, node.conf.AppId, assetId, receivers, threshold, as.Amount.String(), []byte(memo), trace)
 		if t == nil {
-			// TODO then all other assets ignored?
+			// Reference assets are sorted by AssetId during aggregation, so the
+			// lexicographically smallest insufficient asset is selected for compaction.
 			return nil, assetId
 		}
 		txs = append(txs, t)
