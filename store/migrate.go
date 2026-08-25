@@ -19,7 +19,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	}
 	defer common.Rollback(tx)
 
-	key, val := "SCHEMA:VERSION:FAILED_BURN", ""
+	key, val := "SCHEMA:VERSION:FAILED_SYSTEM_CALL_E7B90D0A", ""
 	row := tx.QueryRowContext(ctx, "SELECT value FROM properties WHERE key=?", key)
 	err = row.Scan(&val)
 	if err == nil || err != sql.ErrNoRows {
@@ -28,7 +28,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	now := time.Now().UTC()
 
 	query := "UPDATE system_calls SET state=? WHERE id=? AND state=?"
-	_, err = tx.ExecContext(ctx, query, common.RequestStatePending, "035d4b18-451d-336c-abf1-ee9909f4e931", common.RequestStateFailed)
+	_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, "e7b90d0a-639f-3ce4-9129-9c7c1f82f663", common.RequestStatePending)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
