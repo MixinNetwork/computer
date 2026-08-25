@@ -1,6 +1,7 @@
 package solana
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -31,10 +32,10 @@ type ReferencedTxAsset struct {
 	Fee     bool
 }
 
-func systemCallReferenceOutputState(call *store.SystemCall) byte {
+func systemCallReferenceOutputStateValue(state int64) byte {
 	// Failed system calls may be replayed after compaction; the first attempt has
 	// already moved their references from pending to done.
-	if call.State == common.RequestStateFailed {
+	if state == common.RequestStateFailed {
 		return common.RequestStateDone
 	}
 	return common.RequestStatePending
@@ -332,13 +333,22 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, fmt.Errorf("store.ReadUser(%s) => nil", main.UserIdFromPublicPath())
 	}
 	mtgDeposit := solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
+	authority := node.getUserSolanaPublicKeyFromCall(ctx, post)
+	if call.Type == store.CallTypePrepare {
+		authority = node.getMTGAddress(ctx)
+	}
+	err = node.VerifySubSystemCallEnvelope(tx, authority)
+	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", post.RequestId, err)
+	if err != nil {
+		return nil, err
+	}
 	err = node.VerifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress))
 	logger.Printf("node.VerifySubSystemCall(%s) => %v", user.ChainAddress, err)
 	if err != nil {
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputState(main))
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(main.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
 	}
@@ -352,9 +362,92 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 			return nil, err
 		}
 	case FlagConfirmCallFail:
-		// TODO compare with user outputs
+		err = node.verifyFailedPostProcessCall(ctx, call, main, post, tx)
+		logger.Printf("node.verifyFailedPostProcessCall(%s) => %v", call.RequestId, err)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return post, nil
+}
+
+func (node *Node) verifyFailedPostProcessCall(ctx context.Context, call, main, post *store.SystemCall, actual *solana.Transaction) error {
+	nonce := &store.NonceAccount{
+		Address: post.NonceAccount,
+		Hash:    actual.Message.RecentBlockhash.String(),
+	}
+	var expected *solana.Transaction
+	switch call.Type {
+	case store.CallTypeMain:
+		expected = node.CreatePostProcessTransaction(ctx, main, nonce, nil, nil)
+	case store.CallTypePrepare:
+		expected = node.CreateRefundWithdrawalTransaction(ctx, call, main, nonce)
+	default:
+		return fmt.Errorf("invalid failed post-process superior type: %s", call.Type)
+	}
+	if expected == nil {
+		return fmt.Errorf("unexpected failed post-process transaction")
+	}
+	return compareCleanupTransactions(actual, expected)
+}
+
+func compareCleanupTransactions(actual, expected *solana.Transaction) error {
+	if len(actual.Message.AccountKeys) == 0 || len(expected.Message.AccountKeys) == 0 {
+		return fmt.Errorf("cleanup transaction has no fee payer")
+	}
+	if actual.Message.AccountKeys[0] != expected.Message.AccountKeys[0] {
+		return fmt.Errorf("invalid cleanup fee payer: %s", actual.Message.AccountKeys[0])
+	}
+	if !slices.Equal(actual.Message.Signers(), expected.Message.Signers()) {
+		return fmt.Errorf("invalid cleanup signers: %v", actual.Message.Signers())
+	}
+	if len(actual.Message.Instructions) != len(expected.Message.Instructions) {
+		return fmt.Errorf("invalid cleanup instruction count: %d %d", len(actual.Message.Instructions), len(expected.Message.Instructions))
+	}
+
+	for i, actualIx := range actual.Message.Instructions {
+		expectedIx := expected.Message.Instructions[i]
+		actualProgram, err := actual.Message.Program(actualIx.ProgramIDIndex)
+		if err != nil {
+			return fmt.Errorf("resolve cleanup program %d: %w", i, err)
+		}
+		expectedProgram, err := expected.Message.Program(expectedIx.ProgramIDIndex)
+		if err != nil {
+			return fmt.Errorf("resolve expected cleanup program %d: %w", i, err)
+		}
+		if actualProgram != expectedProgram {
+			return fmt.Errorf("invalid cleanup program %d: %s", i, actualProgram)
+		}
+
+		actualAccounts, err := actualIx.ResolveInstructionAccounts(&actual.Message)
+		if err != nil {
+			return fmt.Errorf("resolve cleanup accounts %d: %w", i, err)
+		}
+		expectedAccounts, err := expectedIx.ResolveInstructionAccounts(&expected.Message)
+		if err != nil {
+			return fmt.Errorf("resolve expected cleanup accounts %d: %w", i, err)
+		}
+		if len(actualAccounts) != len(expectedAccounts) {
+			return fmt.Errorf("invalid cleanup account count %d: %d %d", i, len(actualAccounts), len(expectedAccounts))
+		}
+		for j := range actualAccounts {
+			a, e := actualAccounts[j], expectedAccounts[j]
+			if a.PublicKey != e.PublicKey || a.IsSigner != e.IsSigner || a.IsWritable != e.IsWritable {
+				return fmt.Errorf("invalid cleanup account %d:%d: %s", i, j, a.PublicKey)
+			}
+		}
+
+		if i == 1 && actualProgram == solana.ComputeBudget {
+			if len(actualIx.Data) != 9 || len(expectedIx.Data) != 9 || actualIx.Data[0] != expectedIx.Data[0] {
+				return fmt.Errorf("invalid compute budget instruction")
+			}
+			continue
+		}
+		if !bytes.Equal(actualIx.Data, expectedIx.Data) {
+			return fmt.Errorf("invalid cleanup instruction data: %d", i)
+		}
+	}
+	return nil
 }
 
 func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Request, data []byte) (*store.SystemCall, *solana.Transaction, error) {

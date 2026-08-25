@@ -14,7 +14,6 @@ import (
 	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
-	"github.com/MixinNetwork/mixin/util/base58"
 	"github.com/MixinNetwork/safe/apps/mixin"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
@@ -346,6 +345,11 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 			prepare.Public = hex.EncodeToString(user.FingerprintWithEmptyPath())
 			prepare.State = common.RequestStatePending
 
+			err = node.VerifySubSystemCallEnvelope(tx, node.getMTGAddress(ctx))
+			logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", prepare.RequestId, err)
+			if err != nil {
+				return node.failRequest(ctx, req, "")
+			}
 			err = node.VerifySubSystemCall(ctx, tx, solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry), solana.MustPublicKeyFromBase58(user.ChainAddress))
 			logger.Printf("node.VerifySubSystemCall(%s) => %v", user.ChainAddress, err)
 			if err != nil {
@@ -532,6 +536,27 @@ func validateExternalAssetMint(address, mtg string, mint *solanaApp.Asset) error
 	return nil
 }
 
+// processConfirmCall accepts the following record combinations:
+//
+//	1 [success:Main]: confirm a Main call that has no pending Prepare; optional
+//	  storage contains its normal post-process call.
+//	2 [fail:Main]: fail a Main call that has no pending Prepare; optional
+//	  storage contains its cleanup call.
+//	3 [fail:Prepare]: fail Prepare and its Main call; storage contains the
+//	  Solana-asset refund call exactly when such a refund exists.
+//	4 [success:Prepare, success:Main]: confirm both calls; optional storage
+//	  contains Main's normal post-process call.
+//	5 [success:Prepare, fail:Main]: confirm Prepare and fail Main; optional
+//	  storage contains Main's cleanup call.
+//	6 [success:Deposit/PostProcess]: finish one terminal call;
+//		  storage must be empty.
+//	7 [fail:Deposit/PostProcess]: fail one terminal call;
+//		  storage must be empty.
+//
+// No other ordering is valid: there are at most two records, a failed record
+// must be last, and a two-record sequence must be Prepare followed by its Main.
+// Every record must also match a Solana transaction whose Meta.Err agrees with
+// the reported status.
 func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([]*mtg.Transaction, string) {
 	if req.Role != RequestRoleObserver {
 		panic(req.Role)
@@ -540,117 +565,134 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		panic(req.Action)
 	}
 
-	extra := req.ExtraBytes()
-	if len(extra) < 1 {
-		logger.Printf("invalid extra length for confirm call: %d", len(extra))
+	records, storage, err := decodeConfirmCallRecords(req.ExtraBytes())
+	if err != nil {
+		logger.Printf("decodeConfirmCallRecords(%s) => %v", req.Id, err)
 		return node.failRequest(ctx, req, "")
 	}
-	flag, extra := extra[0], extra[1:]
 
-	switch flag {
-	case FlagConfirmCallSuccess:
-		if len(extra) < 1 {
-			logger.Printf("invalid extra length for successful confirm call: %d", len(extra))
-			return node.failRequest(ctx, req, "")
-		}
-		n, extra := int(extra[0]), extra[1:]
-		if n == 0 || n > 2 {
-			logger.Printf("invalid length of signature: %d", n)
-			return node.failRequest(ctx, req, "")
-		}
-		if len(extra) < n*solana.SignatureLength {
-			logger.Printf("invalid signature payload length: %d %d", len(extra), n)
-			return node.failRequest(ctx, req, "")
-		}
-
-		var calls []*store.SystemCall
-
-		signature := base58.Encode(extra[:64])
-		call, tx, err := node.checkConfirmCallSignature(ctx, signature)
-		logger.Printf("node.checkConfirmCallSignature(%s) => %v", signature, err)
+	calls := make([]*store.SystemCall, 0, len(records))
+	transactions := make([]*rpc.GetTransactionResult, 0, len(records))
+	// Verify every reported result independently against the transaction that
+	// Solana confirmed. validateConfirmCall also marks the in-memory call with
+	// the target state/hash; database writes still happen only after the whole
+	// record combination is accepted.
+	for _, record := range records {
+		call, transaction, err := node.validateConfirmCall(ctx, req, record.Status, record.CallId, record.Signature.String())
+		logger.Printf("node.validateConfirmCall(%d %s %s) => %v", record.Status, record.CallId, record.Signature.String(), err)
 		if err != nil {
-			if strings.Contains(err.Error(), "failed solana tx") {
-				return node.failSystemCall(ctx, req, call)
-			}
 			return node.failRequest(ctx, req, "")
 		}
+		calls = append(calls, call)
+		transactions = append(transactions, transaction)
+	}
 
-		switch call.Type {
-		case store.CallTypeDeposit, store.CallTypePostProcess:
-			return node.confirmBurnRelatedSystemCall(ctx, req, call, tx, signature)
-		case store.CallTypePrepare:
-			calls = append(calls, call)
-			if n == 2 {
-				signature := base58.Encode(extra[64:128])
-				call, _, err = node.checkConfirmCallSignature(ctx, signature)
-				logger.Printf("node.checkConfirmCallSignature(%s) => %v", signature, err)
-				if err != nil {
-					if strings.Contains(err.Error(), "failed solana tx") {
-						return node.failSystemCall(ctx, req, call)
-					}
-					return node.failRequest(ctx, req, "")
-				}
-				calls = append(calls, call)
-			}
-		case store.CallTypeMain:
-			if n == 2 {
-				panic(call.Type)
-			}
-			calls = append(calls, call)
-		default:
-			panic(call.Type)
+	// A two-call confirmation is only valid for the execution sequence created
+	// by the observer: a successful Prepare followed by its Main call.
+	if len(calls) == 2 {
+		if records[0].Status != FlagConfirmCallSuccess || calls[0].Type != store.CallTypePrepare ||
+			calls[1].Type != store.CallTypeMain || calls[0].Superior != calls[1].RequestId {
+			logger.Printf("invalid confirm call sequence: %v %v", calls[0], calls[1])
+			return node.failRequest(ctx, req, "")
 		}
-
-		var session *store.Session
-		var outputs []*store.UserOutput
-		var post *store.SystemCall
-		if call.Type == store.CallTypeMain {
-			os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	}
+	if len(calls) == 1 {
+		switch calls[0].Type {
+		case store.CallTypeMain:
+			// If Main still has a pending Prepare, its result cannot be confirmed alone.
+			needPrepare, err := node.store.CheckUnfinishedSubCalls(ctx, calls[0])
 			if err != nil {
 				panic(err)
 			}
-			outputs = os
-
-			post, err = node.getPostProcessCall(ctx, req, flag, call, extra[n*64:])
-			logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
-			if err != nil {
+			if needPrepare {
+				logger.Printf("main confirm call is missing prepare evidence: %s", calls[0].RequestId)
 				return node.failRequest(ctx, req, "")
 			}
-			if post != nil {
-				session = &store.Session{
-					Id:         post.RequestId,
-					RequestId:  post.RequestId,
-					MixinHash:  req.MixinHash.String(),
-					MixinIndex: req.Output.OutputIndex,
-					Index:      0,
-					Operation:  OperationTypeSignInput,
-					Public:     post.Public,
-					Extra:      post.MessageHex(),
-					CreatedAt:  req.CreatedAt,
-				}
+		case store.CallTypePrepare:
+			// The observer never executes Prepare independently: ListSignedCalls always
+			// pairs it with Main. Accepting a standalone success would unnecessarily
+			// widen the confirmation protocol and allow Main evidence to be omitted.
+			if records[0].Status == FlagConfirmCallSuccess {
+				return node.failRequest(ctx, req, "")
 			}
 		}
-		err = node.store.ConfirmSystemCallsWithRequest(ctx, req, calls, post, session, outputs)
-		if err != nil {
-			panic(err)
-		}
-		return nil, ""
-	case FlagConfirmCallFail:
-		if len(extra) < uuid.Size {
-			logger.Printf("invalid extra length for failed confirm call: %d", len(extra))
+	}
+	// Execution stops at the first failed transaction, so a failure can only be
+	// the final record in the reported sequence.
+	for i, record := range records {
+		if record.Status == FlagConfirmCallFail && i != len(records)-1 {
+			logger.Printf("failed confirm call record must be last: %d", i)
 			return node.failRequest(ctx, req, "")
 		}
-		callId := uuid.Must(uuid.FromBytes(extra[:16])).String()
-		call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
-		logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err)
-		if err != nil {
-			panic(err)
+	}
+
+	call := calls[len(calls)-1]
+	flag := records[len(records)-1].Status
+	signature := records[len(records)-1].Signature.String()
+
+	// Deposit and PostProcess calls are terminal calls. They cannot be combined
+	// with another confirmation or create another post-process transaction.
+	if call.Type == store.CallTypeDeposit || call.Type == store.CallTypePostProcess {
+		if len(calls) != 1 || len(storage) != 0 {
+			return node.failRequest(ctx, req, "")
 		}
-		return node.failSystemCall(ctx, req, call)
-	default:
-		logger.Printf("invalid confirm flag: %d", flag)
+		// For situation 7
+		if flag == FlagConfirmCallFail {
+			return node.failSystemCall(ctx, req, call, nil, nil)
+		}
+		// For situation 6
+		return node.confirmBurnRelatedSystemCall(ctx, req, call, transactions[0], signature)
+	}
+
+	// Failed Main/Prepare calls may carry one cleanup transaction, which is
+	// validated by failSystemCall before a new signing session is created.
+	// For situation 2, 3, 5
+	if flag == FlagConfirmCallFail {
+		return node.failSystemCall(ctx, req, call, storage, calls)
+	}
+
+	// For situation 1, 4
+	return node.confirmMainOrPrepareSystemCalls(ctx, req, calls, storage)
+}
+
+func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *store.Request, calls []*store.SystemCall, storage []byte) ([]*mtg.Transaction, string) {
+	call := calls[len(calls)-1]
+
+	var session *store.Session
+	var outputs []*store.UserOutput
+	var post *store.SystemCall
+	if call.Type != store.CallTypeMain {
 		return node.failRequest(ctx, req, "")
 	}
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	if err != nil {
+		panic(err)
+	}
+	outputs = os
+
+	post, err = node.getPostProcessCall(ctx, req, FlagConfirmCallSuccess, call, storage)
+	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
+	if err != nil {
+		return node.failRequest(ctx, req, "")
+	}
+	if post != nil {
+		session = &store.Session{
+			Id:         post.RequestId,
+			RequestId:  post.RequestId,
+			MixinHash:  req.MixinHash.String(),
+			MixinIndex: req.Output.OutputIndex,
+			Index:      0,
+			Operation:  OperationTypeSignInput,
+			Public:     post.Public,
+			Extra:      post.MessageHex(),
+			CreatedAt:  req.CreatedAt,
+		}
+	}
+	err = node.store.ConfirmSystemCallsWithRequest(ctx, req, calls, post, session, outputs)
+	if err != nil {
+		panic(err)
+	}
+	return nil, ""
 }
 
 func (node *Node) processObserverRequestSign(ctx context.Context, req *store.Request) ([]*mtg.Transaction, string) {
@@ -736,6 +778,11 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 	call, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[96:])
 	if err != nil || call == nil {
 		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v %v", req, call, err)
+		return node.failRequest(ctx, req, "")
+	}
+	err = node.VerifySubSystemCallEnvelope(tx, userAddress)
+	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", call.RequestId, err)
+	if err != nil {
 		return node.failRequest(ctx, req, "")
 	}
 	err = node.VerifySubSystemCall(ctx, tx, solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry), userAddress)
@@ -948,33 +995,35 @@ func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, 
 	return txs, compaction
 }
 
-func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall) ([]*mtg.Transaction, string) {
+// Handle the following situations for a failed system call:
+//
+//   - [fail:Main]: fail a Main call that has no pending Prepare; optional
+//     storage contains its cleanup call.
+//   - [fail:Prepare]: fail Prepare and its Main call; storage contains the
+//     Solana-asset refund call exactly when such a refund exists.
+//   - [success:Prepare, fail:Main]: confirm Prepare and fail Main; optional
+//     storage contains Main's cleanup call.
+//   - [fail:Deposit/PostProcess]: fail one terminal call;
+//     storage must be empty.
+func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, storage []byte, calls []*store.SystemCall) ([]*mtg.Transaction, string) {
 	if call == nil {
 		return node.failRequest(ctx, req, "")
 	}
-	extra := req.ExtraBytes()
-	if len(extra) < 1+uuid.Size {
-		logger.Printf("invalid extra length for failed system call: %d", len(extra))
-		return node.failRequest(ctx, req, "")
-	}
-	switch call.State {
-	case common.RequestStatePending, common.RequestStateFailed:
-	default:
-		return node.failRequest(ctx, req, "")
-	}
-
-	flag, extra := extra[0], extra[1:]
-
-	storage := extra[16:]
-	if flag == FlagConfirmCallSuccess {
-		storage = nil
+	// validateConfirmCall mutates call to the target state before any database
+	// write happens. Re-read the persisted row here when rebuilding cleanup
+	// expectations, so a first failure still sees Pending references and a
+	// compaction replay sees the already-failed references.
+	referenceCall, err := node.store.ReadSystemCallByRequestId(ctx, call.RequestId, 0)
+	logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.RequestId, referenceCall, err)
+	if err != nil || referenceCall == nil {
+		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", call.RequestId, referenceCall, err))
 	}
 
 	var outputs []*store.UserOutput
 	var mix *bot.MixAddress
 	switch call.Type {
 	case store.CallTypeMain, store.CallTypePrepare:
-		main := call
+		main := referenceCall
 		if call.Type == store.CallTypePrepare {
 			c, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
 			logger.Printf("store.ReadSystemCallByRequestId(%s) => %v %v", call.Superior, c, err)
@@ -982,6 +1031,14 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 				panic(err)
 			}
 			main = c
+
+			// A failed Prepare needs a Solana cleanup whenever its associated withdrawals
+			// produced refundable Solana transfers. The observer may omit storage only
+			// when the deterministic refund builder produces no transaction.
+			if len(storage) == 0 && len(node.buildRefundWithdrawalTransfers(ctx, referenceCall, main)) > 0 {
+				logger.Printf("missing refund storage for failed Prepare: %s", call.RequestId)
+				return node.failRequest(ctx, req, "")
+			}
 
 			user, err := node.store.ReadUser(ctx, main.UserIdFromPublicPath())
 			if err != nil {
@@ -993,7 +1050,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputState(call))
+		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(referenceCall.State))
 		if err != nil {
 			panic(err)
 		}
@@ -1001,7 +1058,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	}
 
 	var session *store.Session
-	post, err := node.getPostProcessCall(ctx, req, FlagConfirmCallFail, call, storage)
+	post, err := node.getPostProcessCall(ctx, req, FlagConfirmCallFail, referenceCall, storage)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")
@@ -1038,21 +1095,42 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 		}
 	}
 
-	err = node.store.FailSystemCallWithRequest(ctx, req, call, post, session, outputs, txs, compaction)
+	var confirmed []*store.SystemCall
+	if len(calls) > 1 {
+		confirmed = calls[:len(calls)-1]
+	}
+	err = node.store.FailSystemCallWithRequest(ctx, req, call, confirmed, post, session, outputs, txs, compaction)
 	if err != nil {
 		panic(err)
 	}
 	return txs, compaction
 }
 
-func (node *Node) checkConfirmCallSignature(ctx context.Context, signature string) (*store.SystemCall, *rpc.GetTransactionResult, error) {
+// validateConfirmCall verifies the observer's status against the stored call and
+// the exact Solana transaction. Once the proof is accepted, it updates the
+// returned call to the state that should be persisted.
+func (node *Node) validateConfirmCall(ctx context.Context, req *store.Request, status byte, callId, signature string) (*store.SystemCall, *rpc.GetTransactionResult, error) {
+	call, err := node.store.ReadSystemCallByRequestId(ctx, callId, 0)
+	if err != nil || call == nil {
+		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", callId, call, err))
+	}
+	if !validConfirmCallState(req, status, call) {
+		return nil, nil, fmt.Errorf("invalid confirm call state: %s %d", callId, call.State)
+	}
+	if !validFailedConfirmCallHash(call, signature) {
+		return nil, nil, fmt.Errorf("invalid failed confirm call hash: %s %s", callId, signature)
+	}
+
 	transaction, err := node.RPCGetTransaction(ctx, signature)
-	if err != nil || transaction == nil {
-		panic(fmt.Errorf("checkConfirmCallSignature(%s) => %v", signature, err))
+	if err != nil || transaction == nil || transaction.Meta == nil {
+		panic(fmt.Errorf("RPCGetTransaction(%s) => %v %v", signature, transaction, err))
 	}
 	tx, err := transaction.Transaction.GetTransaction()
 	if err != nil {
 		panic(err)
+	}
+	if len(tx.Signatures) == 0 || tx.Signatures[0].String() != signature {
+		panic(fmt.Errorf("confirm call transaction signature mismatch: %s", signature))
 	}
 	msg, err := tx.Message.MarshalBinary()
 	if err != nil {
@@ -1078,18 +1156,28 @@ func (node *Node) checkConfirmCallSignature(ctx context.Context, signature strin
 			hash = test
 		}
 	}
+	if hash != call.MessageHash {
+		panic(fmt.Errorf("confirm call message mismatch: %s %s %s", callId, call.MessageHash, hash))
+	}
 
-	call, err := node.store.ReadSystemCallByMessage(ctx, hash)
-	if err != nil {
-		panic(fmt.Errorf("store.ReadSystemCallByMessage(%x) => %v", msg, err))
+	failed := transaction.Meta.Err != nil
+	if common.CheckTestEnvironment(ctx) && isTestFailedSystemConfirmCall(signature) {
+		failed = true
 	}
-	if call == nil || call.State != common.RequestStatePending {
-		return nil, nil, fmt.Errorf("checkConfirmCallSignature(%s) => invalid call %v", signature, call)
+	if status == FlagConfirmCallSuccess && failed {
+		return nil, nil, fmt.Errorf("expected successful solana tx: %s", signature)
 	}
-	if transaction.Meta.Err != nil {
-		return call, nil, fmt.Errorf("failed solana tx: %s %s", signature, formatTransactionError(transaction.Meta.Err))
+	if status == FlagConfirmCallFail && !failed {
+		return nil, nil, fmt.Errorf("expected failed solana tx: %s", signature)
 	}
-	call.State = common.RequestStateDone
+	switch status {
+	case FlagConfirmCallSuccess:
+		call.State = common.RequestStateDone
+	case FlagConfirmCallFail:
+		call.State = common.RequestStateFailed
+	default:
+		panic(status)
+	}
 	call.Hash = sql.NullString{Valid: true, String: signature}
 	return call, transaction, nil
 }
@@ -1200,4 +1288,18 @@ func checkUser(ctx context.Context, req *store.Request, mix *bot.MixAddress) boo
 	senders := append([]string(nil), req.Output.Senders...)
 	return mix.Threshold == byte(req.Output.SendersThreshold) &&
 		bot.HashMembers(mix.Members()) == bot.HashMembers(senders)
+}
+
+func validConfirmCallState(req *store.Request, status byte, call *store.SystemCall) bool {
+	if call.State == common.RequestStatePending {
+		return true
+	}
+	// A fresh confirmation can only consume a pending call. Failed calls are
+	// accepted only while replaying a compacted action; processAction admits that
+	// path after it has found the same action result with a non-empty compaction.
+	return status == FlagConfirmCallFail && call.State == common.RequestStateFailed && req != nil && req.Restored
+}
+
+func validFailedConfirmCallHash(call *store.SystemCall, signature string) bool {
+	return call.State != common.RequestStateFailed || !call.Hash.Valid || call.Hash.String == signature
 }

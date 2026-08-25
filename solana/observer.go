@@ -768,13 +768,17 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 		call := calls[0]
 		tx, meta, err := node.handleSignedCall(ctx, call)
 		if err != nil {
-			err = node.processFailedCall(ctx, call, err)
+			err = node.processFailedCall(ctx, call, tx.Signatures[0], nil, err)
 			if err != nil {
 				panic(err)
 			}
 			return
 		}
-		err = node.processSuccessedCall(ctx, call, tx, meta, []solana.Signature{tx.Signatures[0]})
+		err = node.processSuccessedCall(ctx, call, tx, meta, []confirmCallRecord{{
+			Status:    FlagConfirmCallSuccess,
+			CallId:    call.RequestId,
+			Signature: tx.Signatures[0],
+		}})
 		if err != nil {
 			panic(err)
 		}
@@ -784,7 +788,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 	var sigs []solana.Signature
 	preTx, _, err := node.handleSignedCall(ctx, calls[0])
 	if err != nil {
-		err = node.processFailedCall(ctx, calls[0], err)
+		err = node.processFailedCall(ctx, calls[0], preTx.Signatures[0], nil, err)
 		if err != nil {
 			panic(err)
 		}
@@ -799,7 +803,11 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 
 	tx, meta, err := node.handleSignedCall(ctx, calls[1])
 	if err != nil {
-		err = node.processFailedCall(ctx, calls[1], err)
+		err = node.processFailedCall(ctx, calls[1], tx.Signatures[0], []confirmCallRecord{{
+			Status:    FlagConfirmCallSuccess,
+			CallId:    calls[0].RequestId,
+			Signature: preTx.Signatures[0],
+		}}, err)
 		if err != nil {
 			panic(err)
 		}
@@ -807,7 +815,10 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 	}
 	sigs = append(sigs, tx.Signatures[0])
 
-	err = node.processSuccessedCall(ctx, calls[1], tx, meta, sigs)
+	err = node.processSuccessedCall(ctx, calls[1], tx, meta, []confirmCallRecord{
+		{Status: FlagConfirmCallSuccess, CallId: calls[0].RequestId, Signature: sigs[0]},
+		{Status: FlagConfirmCallSuccess, CallId: calls[1].RequestId, Signature: sigs[1]},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -849,7 +860,7 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 	rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, call)
 	logger.Printf("node.SendTransactionUtilConfirm(%s, %x) => %v %v", call.RequestId, rb, rpcTx, err)
 	if err != nil || rpcTx == nil {
-		return nil, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s) => %v %v", call.RequestId, rpcTx, err)
+		return tx, nil, fmt.Errorf("node.SendTransactionUtilConfirm(%s) => %v %v", call.RequestId, rpcTx, err)
 	}
 	txx, err := rpcTx.Transaction.GetTransaction()
 	if err != nil {
@@ -859,14 +870,10 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 }
 
 // deposited assets to run system call and new assets received in system call are all handled here
-func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCall, txx *solana.Transaction, meta *rpc.TransactionMeta, hashes []solana.Signature) error {
+func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCall, txx *solana.Transaction, meta *rpc.TransactionMeta, records []confirmCallRecord) error {
 	logger.Printf("node.processSuccessedCall(%s)", call.RequestId)
 	id := common.UniqueId(call.RequestId, "confirm-success")
-	extra := []byte{FlagConfirmCallSuccess}
-	extra = append(extra, byte(len(hashes)))
-	for _, hash := range hashes {
-		extra = append(extra, hash[:]...)
-	}
+	extra := encodeConfirmCallRecords(records)
 
 	if call.Type == store.CallTypeMain && !call.SkipPostProcess {
 		cid := common.UniqueId(id, "post-process")
@@ -898,13 +905,17 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 	}
 }
 
-func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall, callError error) error {
+func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall, signature solana.Signature, successful []confirmCallRecord, callError error) error {
 	logger.Printf("node.processFailedCall(%s)", call.RequestId)
 	id := common.UniqueId(call.RequestId, "confirm-fail")
 	cid := common.UniqueId(id, "post-process")
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-	extra := []byte{FlagConfirmCallFail}
-	extra = append(extra, uuid.Must(uuid.FromString(call.RequestId)).Bytes()...)
+	records := append(successful, confirmCallRecord{
+		Status:    FlagConfirmCallFail,
+		CallId:    call.RequestId,
+		Signature: signature,
+	})
+	extra := encodeConfirmCallRecords(records)
 
 	var tx *solana.Transaction
 	switch call.Type {

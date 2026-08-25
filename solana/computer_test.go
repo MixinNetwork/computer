@@ -245,13 +245,16 @@ func TestPostprocessCompaction(t *testing.T) {
 	user := testUserRequestAddUsers(ctx, require, nodes)
 	call := testUserRequestSystemCall(ctx, require, nodes, mds, user)
 	testConfirmWithdrawal(ctx, require, nodes, call)
-	testObserverConfirmMainCall(ctx, require, nodes, call)
+	sub := testObserverConfirmMainCall(ctx, require, nodes, call)
 
 	node := nodes[0]
 	id := "329346e1-34c2-4de0-8e35-729518eda8bd"
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
-	extra := []byte{FlagConfirmCallSuccess, 1}
-	extra = append(extra, signature[:]...)
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallSuccess,
+		CallId:    sub.RequestId,
+		Signature: signature,
+	}})
 	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 
 	for i := range 2 {
@@ -308,14 +311,46 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 	confirmId := common.UniqueId(prepare.RequestId, "confirm-fail")
 	postId := common.UniqueId(confirmId, "post-process")
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
-	postTx, err := node.CreatePrepareTransaction(ctx, main, nonce, nil)
-	require.Nil(err)
+	postTx := node.CreateRefundWithdrawalTransaction(ctx, prepare, main, nonce)
 	require.NotNil(postTx)
 	raw, err := postTx.MarshalBinary()
 	require.Nil(err)
 
-	extra := []byte{FlagConfirmCallFail}
-	extra = append(extra, uuid.Must(uuid.FromString(prepare.RequestId)).Bytes()...)
+	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
+	successSignature := solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb")
+	rejectedExtras := [][]byte{
+		// Prepare is never confirmed successfully without its Main call.
+		encodeConfirmCallRecords([]confirmCallRecord{{
+			Status:    FlagConfirmCallSuccess,
+			CallId:    prepare.RequestId,
+			Signature: successSignature,
+		}}),
+		// This failed Prepare has refundable Solana withdrawals, so omitting its
+		// refund transaction must not advance either call.
+		encodeConfirmCallRecords([]confirmCallRecord{{
+			Status:    FlagConfirmCallFail,
+			CallId:    prepare.RequestId,
+			Signature: failedSignature,
+		}}),
+	}
+	for _, rejectedExtra := range rejectedExtras {
+		rejected := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), OperationTypeConfirmCall, rejectedExtra)
+		for _, node := range nodes {
+			testStep(ctx, require, node, rejected)
+			prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStatePending)
+			require.Nil(err)
+			require.NotNil(prepare)
+			main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStatePending)
+			require.Nil(err)
+			require.NotNil(main)
+		}
+	}
+
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallFail,
+		CallId:    prepare.RequestId,
+		Signature: failedSignature,
+	}})
 	extra = attachSystemCall(extra, postId, raw)
 	out := testBuildObserverRequest(node, "329346e1-34c2-4de0-8e35-729518eda8bd", OperationTypeConfirmCall, extra)
 
@@ -393,8 +428,11 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 
 	id := uuid.Must(uuid.NewV4()).String()
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
-	extra := []byte{FlagConfirmCallSuccess, 1}
-	extra = append(extra, signature[:]...)
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallSuccess,
+		CallId:    sub.RequestId,
+		Signature: signature,
+	}})
 
 	err = node.store.WritePendingBurnSystemCallIfNotExists(ctx, sub, &common.Operation{
 		Id:    id,
@@ -462,11 +500,11 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
 		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
 	}
-	extra := []byte{FlagConfirmCallSuccess}
-	extra = append(extra, byte(len(signatures)))
-	for _, sig := range signatures {
-		extra = append(extra, sig[:]...)
-	}
+	prepareId := common.UniqueId(call.RequestId, "prepare")
+	extra := encodeConfirmCallRecords([]confirmCallRecord{
+		{Status: FlagConfirmCallSuccess, CallId: prepareId, Signature: signatures[0]},
+		{Status: FlagConfirmCallSuccess, CallId: call.RequestId, Signature: signatures[1]},
+	})
 	extra = attachSystemCall(extra, cid, raw)
 
 	var postprocess *store.SystemCall

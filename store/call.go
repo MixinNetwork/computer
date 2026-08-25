@@ -326,7 +326,13 @@ func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Conte
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Request, call, sub *SystemCall, session *Session, os []*UserOutput, txs []*mtg.Transaction, compaction string) error {
+func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Request, call *SystemCall, confirmed []*SystemCall, sub *SystemCall, session *Session, os []*UserOutput, txs []*mtg.Transaction, compaction string) error {
+	// The store layer only accepts the already-validated transition value. It
+	// should not infer failure or invent the Solana signature on its own.
+	if call.State != common.RequestStateFailed || !call.Hash.Valid {
+		return fmt.Errorf("invalid failed system call transition: %v", call)
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -336,21 +342,38 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 	}
 	defer common.Rollback(tx)
 
-	query := "UPDATE system_calls SET state=?, updated_at=? WHERE id=? AND state=?"
-	_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, req.CreatedAt, call.RequestId, common.RequestStatePending)
+	// First attempt: move the failed call from Pending to Failed and persist the
+	// failed Solana transaction signature. During compaction replay the call may
+	// already be Failed, so this update is allowed to affect zero rows.
+	query := "UPDATE system_calls SET state=?, hash=?, updated_at=? WHERE id=? AND state=?"
+	_, err = tx.ExecContext(ctx, query, call.State, call.Hash, req.CreatedAt, call.RequestId, common.RequestStatePending)
 	if err != nil {
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
+	// Compatibility path for rows that were failed before hash persistence was
+	// added. Existing hashes are never overwritten; validateConfirmCall has
+	// already required a replayed failed call with a hash to match this signature.
+	query = "UPDATE system_calls SET hash=?, updated_at=? WHERE id=? AND state=? AND hash IS NULL"
+	_, err = tx.ExecContext(ctx, query, call.Hash, req.CreatedAt, call.RequestId, common.RequestStateFailed)
+	if err != nil {
+		return fmt.Errorf("SQLite3Store UPDATE failed system_calls hash %v", err)
+	}
 
-	// if a main system call failed, its prepare call must success
-	if call.Type == CallTypeMain {
-		query = "UPDATE system_calls SET state=?, updated_at=? WHERE superior_id=? AND call_type=? AND state=?"
-		_, err = tx.ExecContext(ctx, query, common.RequestStateDone, req.CreatedAt, call.RequestId, CallTypePrepare, common.RequestStatePending)
+	// Persist successful records that precede the failed record in the same
+	// ConfirmCall extra. This keeps [success:Prepare, fail:Main] explicit instead
+	// of deriving Prepare success from the Main failure in the store layer.
+	for _, confirmedCall := range confirmed {
+		query = "UPDATE system_calls SET state=?, hash=?, updated_at=? WHERE id=? AND state=?"
+		err = s.execOne(ctx, tx, query, confirmedCall.State, confirmedCall.Hash, req.CreatedAt, confirmedCall.RequestId, common.RequestStatePending)
 		if err != nil {
-			return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
+			return fmt.Errorf("SQLite3Store UPDATE confirmed system_calls %v", err)
 		}
 	}
-	// if a prepare system call failed, fail its main call
+
+	// If Prepare failed, Main was not executed but must still leave the workflow
+	// terminal. Its refund traces point to any Mixin refund transactions emitted
+	// for external assets; no Solana hash is written because there is no Main
+	// Solana transaction in this path.
 	if call.Type == CallTypePrepare {
 		var ids []string
 		for _, tx := range txs {
@@ -363,6 +386,9 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		}
 	}
 
+	// A failed Main/Prepare can require a cleanup PostProcess call and a matching
+	// SignInput session. Both writes are existence-checked so replaying the same
+	// compacted request does not duplicate signing work.
 	if sub != nil {
 		existed, err := s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE id=?", sub.RequestId)
 		if err != nil {
@@ -395,6 +421,9 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		}
 	}
 
+	// A non-empty compaction means the MTG emitted refund transactions that must
+	// be replayed deterministically later, so the request remains Failed. Without
+	// compaction, all required local state and sessions have been persisted.
 	if compaction == "" {
 		err = s.finishRequest(ctx, tx, req, txs, compaction)
 	} else {
@@ -404,6 +433,8 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		return err
 	}
 
+	// Only terminal successful handling notifies emitted Mixin transactions here.
+	// Compacted failures are replayed from action_results instead.
 	if compaction == "" && len(txs) > 0 {
 		err = s.writeNotifications(ctx, tx, txs)
 		if err != nil {
