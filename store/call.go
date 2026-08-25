@@ -356,8 +356,8 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		for _, tx := range txs {
 			ids = append(ids, tx.TraceId)
 		}
-		query = "UPDATE system_calls SET state=?, refund_traces=?, updated_at=? WHERE superior_id=? AND call_type=? AND state=?"
-		_, err = tx.ExecContext(ctx, query, common.RequestStateFailed, strings.Join(ids, ","), req.CreatedAt, call.Superior, CallTypeMain, common.RequestStatePending)
+		query = "UPDATE system_calls SET state=?, refund_traces=?, updated_at=? WHERE superior_id=? AND call_type=? AND (state=? OR state=?)"
+		err = s.execOne(ctx, tx, query, common.RequestStateFailed, strings.Join(ids, ","), req.CreatedAt, call.Superior, CallTypeMain, common.RequestStatePending, common.RequestStateFailed)
 		if err != nil {
 			return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 		}
@@ -395,7 +395,11 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		}
 	}
 
-	err = s.finishRequest(ctx, tx, req, txs, compaction)
+	if compaction == "" {
+		err = s.finishRequest(ctx, tx, req, txs, compaction)
+	} else {
+		err = s.failRequest(ctx, tx, req, txs, compaction)
+	}
 	if err != nil {
 		return err
 	}

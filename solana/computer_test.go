@@ -287,6 +287,100 @@ func TestPostprocessCompaction(t *testing.T) {
 	}
 }
 
+func TestFailedPostprocessCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require, false)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	testObserverUpdateNetworInfo(ctx, require, nodes)
+	testObserverDeployLitecoinAsset(ctx, require, nodes)
+	user := testUserRequestAddUsers(ctx, require, nodes)
+	main := testUserRequestSystemCall(ctx, require, nodes, mds, user)
+
+	node := nodes[0]
+	prepareId := common.UniqueId(main.RequestId, "prepare")
+	prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStatePending)
+	require.Nil(err)
+	require.NotNil(prepare)
+
+	confirmId := common.UniqueId(prepare.RequestId, "confirm-fail")
+	postId := common.UniqueId(confirmId, "post-process")
+	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
+	postTx, err := node.CreatePrepareTransaction(ctx, main, nonce, nil)
+	require.Nil(err)
+	require.NotNil(postTx)
+	raw, err := postTx.MarshalBinary()
+	require.Nil(err)
+
+	extra := []byte{FlagConfirmCallFail}
+	extra = append(extra, uuid.Must(uuid.FromString(prepare.RequestId)).Bytes()...)
+	extra = attachSystemCall(extra, postId, raw)
+	out := testBuildObserverRequest(node, "329346e1-34c2-4de0-8e35-729518eda8bd", OperationTypeConfirmCall, extra)
+
+	testSpendAllGroupOutputs(ctx, require, nodes, common.SafeLitecoinChainId)
+
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(prepare)
+		main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(main)
+		outputs, _, err := node.GetSystemCallReferenceOutputs(ctx, user.UserId, main.RequestHash, common.RequestStateDone)
+		require.Nil(err)
+		require.Len(outputs, 2)
+		sub, err := node.store.ReadSystemCallByRequestId(ctx, postId, common.RequestStatePending)
+		require.Nil(err)
+		require.NotNil(sub)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, out.OutputId)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+		require.Len(ar.Transactions, 0)
+		req, err := node.store.ReadRequest(ctx, out.OutputId)
+		require.Nil(err)
+		require.Equal(uint8(common.RequestStateFailed), req.State)
+	}
+
+	// Simulate a compacted failure persisted by older nodes before the request was
+	// left retryable.
+	err = nodes[0].store.TestSetRequestState(ctx, out.OutputId, common.RequestStateDone)
+	require.Nil(err)
+
+	sequence += 100
+	_, err = testWriteOutputForNodes(ctx, mds, node.conf.AppId, common.SafeLitecoinChainId, "", "", sequence, decimal.RequireFromString("0.0108"))
+	require.Nil(err)
+	out.Sequence = sequence
+
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(prepare)
+		main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(main)
+		require.Len(main.GetRefundIds(), 1)
+		outputs, _, err := node.GetSystemCallReferenceOutputs(ctx, user.UserId, main.RequestHash, common.RequestStateDone)
+		require.Nil(err)
+		require.Len(outputs, 2)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, out.OutputId)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal("", ar.Compaction)
+		require.Len(ar.Transactions, 1)
+		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+		req, err := node.store.ReadRequest(ctx, out.OutputId)
+		require.Nil(err)
+		require.Equal(uint8(common.RequestStateDone), req.State)
+	}
+}
+
 func testObserverConfirmPostProcessCall(ctx context.Context, require *require.Assertions, nodes []*Node, sub *store.SystemCall) {
 	node := nodes[0]
 	err := node.store.UpdateNonceAccount(ctx, sub.NonceAccount, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", sub.RequestId)
@@ -673,6 +767,35 @@ func testObserverSetPriceParams(ctx context.Context, require *require.Assertions
 		require.NotNil(params)
 		require.Equal(node.conf.OperationPriceAssetId, params.OperationPriceAsset)
 		require.Equal(node.conf.OperationPriceAmount, params.OperationPriceAmount.String())
+	}
+}
+
+func testObserverDeployLitecoinAsset(ctx context.Context, require *require.Assertions, nodes []*Node) {
+	extra := []byte{1}
+	extra = append(extra, uuid.Must(uuid.FromString(common.SafeLitecoinChainId)).Bytes()...)
+	extra = append(extra, solana.MustPublicKeyFromBase58("EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8").Bytes()...)
+
+	out := testBuildObserverRequest(nodes[0], uuid.Must(uuid.NewV4()).String(), OperationTypeDeployExternalAssets, extra)
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		asset, err := node.store.ReadDeployedAsset(ctx, common.SafeLitecoinChainId)
+		require.Nil(err)
+		require.NotNil(asset)
+		require.Equal("EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8", asset.Address)
+	}
+}
+
+func testSpendAllGroupOutputs(ctx context.Context, require *require.Assertions, nodes []*Node, assetId string) {
+	for _, node := range nodes {
+		for {
+			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			if len(os) == 0 {
+				break
+			}
+			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
 	}
 }
 

@@ -31,6 +31,15 @@ type ReferencedTxAsset struct {
 	Fee     bool
 }
 
+func systemCallReferenceOutputState(call *store.SystemCall) byte {
+	// Failed system calls may be replayed after compaction; the first attempt has
+	// already moved their references from pending to done.
+	if call.State == common.RequestStateFailed {
+		return common.RequestStateDone
+	}
+	return common.RequestStatePending
+}
+
 // should only return error when mtg could not find outputs from referenced transaction
 // all assets needed in system call should be referenced
 // extra amount of XIN is used for fees in system call like rent
@@ -329,7 +338,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, common.RequestStatePending)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputState(main))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
 	}
