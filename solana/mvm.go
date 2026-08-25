@@ -56,7 +56,7 @@ func (node *Node) processAddUser(ctx context.Context, req *store.Request) ([]*mt
 	if err != nil {
 		return node.failRequest(ctx, req, "")
 	}
-	if !checkUser(ctx, req, mmix) {
+	if !checkUser(req, mmix) {
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -113,7 +113,7 @@ func (node *Node) processUserDeposit(ctx context.Context, req *store.Request) ([
 	if err != nil {
 		panic(err)
 	}
-	if !checkUser(ctx, req, mix) {
+	if !checkUser(req, mix) {
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -207,7 +207,7 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil {
 		panic(err)
 	}
-	if !checkUser(ctx, req, mix) {
+	if !checkUser(req, mix) {
 		return node.failRequest(ctx, req, "")
 	}
 
@@ -1281,10 +1281,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	return txs, ""
 }
 
-func checkUser(ctx context.Context, req *store.Request, mix *bot.MixAddress) bool {
-	if common.CheckTestEnvironment(ctx) {
-		return true
-	}
+func checkUser(req *store.Request, mix *bot.MixAddress) bool {
 	senders := append([]string(nil), req.Output.Senders...)
 	return mix.Threshold == byte(req.Output.SendersThreshold) &&
 		bot.HashMembers(mix.Members()) == bot.HashMembers(senders)
