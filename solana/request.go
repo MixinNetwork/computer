@@ -102,6 +102,24 @@ func decodeConfirmCallRecords(extra []byte) ([]confirmCallRecord, []byte, error)
 	return records, extra, nil
 }
 
+func validateConfirmCallStorage(storage []byte) error {
+	if len(storage) == 0 {
+		return nil
+	}
+	if len(storage) < uuid.Size {
+		return fmt.Errorf("invalid confirm call storage length: %d", len(storage))
+	}
+	_, err := uuid.FromBytes(storage[:uuid.Size])
+	if err != nil {
+		return fmt.Errorf("invalid post call id: %v", err)
+	}
+	_, err = solana.TransactionFromBytes(storage[uuid.Size:])
+	if err != nil {
+		return fmt.Errorf("invalid post call transaction: %v", err)
+	}
+	return nil
+}
+
 func decodeRequest(out *mtg.Action, extra []byte, role uint8) (*store.Request, error) {
 	h, err := crypto.HashFromString(out.TransactionHash)
 	if err != nil {

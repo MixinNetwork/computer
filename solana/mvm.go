@@ -570,6 +570,10 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 		logger.Printf("decodeConfirmCallRecords(%s) => %v", req.Id, err)
 		return node.failRequest(ctx, req, "")
 	}
+	err = validateConfirmCallStorage(storage)
+	if err != nil {
+		panic(fmt.Errorf("validateConfirmCallStorage(%s) => %w", req.Id, err))
+	}
 
 	calls := make([]*store.SystemCall, 0, len(records))
 	transactions := make([]*rpc.GetTransactionResult, 0, len(records))
