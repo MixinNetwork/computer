@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	bot "github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/safe/common"
@@ -23,6 +24,9 @@ const (
 	recoveryUserID      = "281474976710860"
 	recoverySource      = "9Qji1YiSqDho92vdquZRQmB4A5mCDHDboaWFkMvvQtLX"
 	recoveryDestination = "72x3zjRxDMdpMDtzzHRTKrf9Hu6unWqfhHGbAf2N4LpK"
+
+	recoveryDestinationMember    = "fcb87491-4fa0-4c2f-b387-262b63cbc112"
+	recoveryDestinationThreshold = byte(1)
 
 	// Finalized balance at Solana slot 441551757.
 	recoverySOLAmount        uint64 = 1_514_340_633
@@ -93,6 +97,9 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 	if destinationUser == nil {
 		return fmt.Errorf("recovery destination is not a Computer user: %s", recoveryDestination)
 	}
+	if err := validateRecoveryDestinationUser(destinationUser); err != nil {
+		return err
+	}
 
 	txContext, err := recoveryTransactionContextFromOriginal(original)
 	if err != nil {
@@ -159,6 +166,19 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func validateRecoveryDestinationUser(user *User) error {
+	mix, err := bot.NewMixAddressFromString(user.MixAddress)
+	if err != nil {
+		return fmt.Errorf("invalid recovery destination mix address: %w", err)
+	}
+	members := mix.Members()
+	if mix.Threshold != recoveryDestinationThreshold ||
+		len(members) != 1 || members[0] != recoveryDestinationMember {
+		return fmt.Errorf("invalid recovery destination mix address: %v, %d", members, mix.Threshold)
+	}
+	return nil
 }
 
 func recoveryTransactionContextFromOriginal(original *SystemCall) (*recoveryTransactionContext, error) {
