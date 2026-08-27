@@ -3,11 +3,11 @@ module github.com/MixinNetwork/computer
 go 1.27.0
 
 require (
-	github.com/MixinNetwork/bot-api-go-client/v3 v3.25.1
+	github.com/MixinNetwork/bot-api-go-client/v3 v3.25.3
 	github.com/MixinNetwork/imaging v1.0.0
 	github.com/MixinNetwork/mixin v0.19.6
 	github.com/MixinNetwork/multi-party-sig v0.7.0
-	github.com/MixinNetwork/safe v0.27.1-0.20260826151051-6ad666e5e2ad
+	github.com/MixinNetwork/safe v0.28.0
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/dimfeld/httptreemux/v5 v5.5.0
@@ -93,7 +93,7 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.9 // indirect
-	go.mongodb.org/mongo-driver/v2 v2.8.1 // indirect
+	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
