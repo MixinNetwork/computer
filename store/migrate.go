@@ -69,7 +69,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 		return err
 	}
 	if original == nil {
-		return fmt.Errorf("failed system call not found: %s", failedSystemCallID)
+		return fmt.Errorf("required recovery system call not found: %s", failedSystemCallID)
 	}
 	if original.Type != CallTypeDeposit {
 		return fmt.Errorf("invalid recovery system call type: %s", original.Type)
@@ -78,12 +78,20 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 		return fmt.Errorf("recovery system call already has a signature")
 	}
 
-	user, err := s.ReadUserByChainAddress(ctx, recoverySource)
+	sourceUser, err := s.ReadUserByChainAddress(ctx, recoverySource)
 	if err != nil {
 		return err
 	}
-	if user == nil || user.UserId != recoveryUserID {
-		return fmt.Errorf("invalid recovery user: %v", user)
+	if sourceUser == nil || sourceUser.UserId != recoveryUserID {
+		return fmt.Errorf("invalid recovery source user: %v", sourceUser)
+	}
+
+	destinationUser, err := s.ReadUserByChainAddress(ctx, recoveryDestination)
+	if err != nil {
+		return err
+	}
+	if destinationUser == nil {
+		return fmt.Errorf("recovery destination is not a Computer user: %s", recoveryDestination)
 	}
 
 	txContext, err := recoveryTransactionContextFromOriginal(original)
@@ -108,7 +116,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 		}
 	}
 
-	recovery, err := buildRecoverySystemCall(original, user, txContext)
+	recovery, err := buildRecoverySystemCall(original, sourceUser, destinationUser, txContext)
 	if err != nil {
 		return err
 	}
@@ -134,7 +142,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 		result, err := tx.ExecContext(ctx, `UPDATE nonce_accounts
 			SET mix=?, call_id=?, updated_at=?
 			WHERE address=? AND hash=? AND (call_id IS NULL OR call_id=?)`,
-			user.MixAddress, recovery.RequestId, recovery.CreatedAt,
+			sourceUser.MixAddress, recovery.RequestId, recovery.CreatedAt,
 			nonce.Address, nonce.Hash, original.RequestId,
 		)
 		if err != nil {
@@ -181,14 +189,14 @@ func recoveryTransactionContextFromOriginal(original *SystemCall) (*recoveryTran
 	}, nil
 }
 
-func buildRecoverySystemCall(original *SystemCall, user *User, txContext *recoveryTransactionContext) (*SystemCall, error) {
+func buildRecoverySystemCall(original *SystemCall, sourceUser, destinationUser *User, txContext *recoveryTransactionContext) (*SystemCall, error) {
 	payer := txContext.payer
 
-	source, err := solana.PublicKeyFromBase58(user.ChainAddress)
+	source, err := solana.PublicKeyFromBase58(sourceUser.ChainAddress)
 	if err != nil {
 		return nil, fmt.Errorf("invalid recovery source: %w", err)
 	}
-	destination, err := solana.PublicKeyFromBase58(recoveryDestination)
+	destination, err := solana.PublicKeyFromBase58(destinationUser.ChainAddress)
 	if err != nil {
 		return nil, fmt.Errorf("invalid recovery destination: %w", err)
 	}
@@ -247,8 +255,8 @@ func buildRecoverySystemCall(original *SystemCall, user *User, txContext *recove
 		RequestHash:     original.RequestHash,
 		Type:            CallTypeMain,
 		NonceAccount:    txContext.nonceAddress.String(),
-		Public:          hex.EncodeToString(user.FingerprintWithPath()),
-		SkipPostProcess: true,
+		Public:          hex.EncodeToString(sourceUser.FingerprintWithPath()),
+		SkipPostProcess: false,
 		MessageHash:     crypto.Sha256Hash(message).String(),
 		Raw:             base64.StdEncoding.EncodeToString(raw),
 		State:           common.RequestStatePending,

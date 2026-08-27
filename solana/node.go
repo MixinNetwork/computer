@@ -70,9 +70,7 @@ func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, cf *C
 }
 
 func (node *Node) Boot(ctx context.Context, version string) {
-	observer := string(node.id) == node.conf.ObserverId
-	err := node.store.Migrate(ctx, observer)
-	if err != nil {
+	if err := node.migrateStore(ctx); err != nil {
 		panic(err)
 	}
 
@@ -81,6 +79,14 @@ func (node *Node) Boot(ctx context.Context, version string) {
 	go node.mtgBalanceCheckLoop(ctx)
 
 	logger.Printf("node.Boot(%s, %d)", node.id, node.Index())
+}
+
+func (node *Node) migrateStore(ctx context.Context) error {
+	if !node.Prod() {
+		return nil
+	}
+	observer := string(node.id) == node.conf.ObserverId
+	return node.store.Migrate(ctx, observer)
 }
 
 func (node *Node) mtgBalanceCheckLoop(ctx context.Context) {
