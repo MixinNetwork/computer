@@ -34,6 +34,12 @@ type recoveryTokenBalance struct {
 	Amount uint64
 }
 
+type recoveryTransactionContext struct {
+	payer        solana.PublicKey
+	nonceAddress solana.PublicKey
+	nonceHash    solana.Hash
+}
+
 // Finalized SPL Token balances at Solana slot 441551796. The destination's
 // associated token accounts for all these mints already exist.
 var recoveryTokenBalances = []recoveryTokenBalance{
@@ -49,7 +55,7 @@ var recoveryTokenBalances = []recoveryTokenBalance{
 	{Mint: "HhotoxePjdLjXohpZNNjPH5NirVNhZenEh7UzR1V2DCV", Amount: 8_942_378_267_971},
 }
 
-func (s *SQLite3Store) Migrate(ctx context.Context) error {
+func (s *SQLite3Store) Migrate(ctx context.Context, observer bool) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -80,18 +86,29 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 		return fmt.Errorf("invalid recovery user: %v", user)
 	}
 
-	nonce, err := s.ReadNonceAccount(ctx, original.NonceAccount)
+	txContext, err := recoveryTransactionContextFromOriginal(original)
 	if err != nil {
 		return err
 	}
-	if nonce == nil {
-		return fmt.Errorf("recovery nonce account not found: %s", original.NonceAccount)
-	}
-	if nonce.CallId.Valid && nonce.CallId.String != original.RequestId {
-		return fmt.Errorf("recovery nonce account is occupied by %s", nonce.CallId.String)
+
+	var nonce *NonceAccount
+	if observer {
+		nonce, err = s.ReadNonceAccount(ctx, original.NonceAccount)
+		if err != nil {
+			return err
+		}
+		if nonce == nil {
+			return fmt.Errorf("recovery nonce account not found: %s", original.NonceAccount)
+		}
+		if nonce.Hash != txContext.nonceHash.String() {
+			return fmt.Errorf("original and stored nonce hashes do not match")
+		}
+		if nonce.CallId.Valid && nonce.CallId.String != original.RequestId {
+			return fmt.Errorf("recovery nonce account is occupied by %s", nonce.CallId.String)
+		}
 	}
 
-	recovery, err := buildRecoverySystemCall(original, user, nonce)
+	recovery, err := buildRecoverySystemCall(original, user, txContext)
 	if err != nil {
 		return err
 	}
@@ -113,18 +130,20 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 		return err
 	}
 
-	result, err := tx.ExecContext(ctx, `UPDATE nonce_accounts
-		SET mix=?, call_id=?, updated_at=?
-		WHERE address=? AND hash=? AND (call_id IS NULL OR call_id=?)`,
-		user.MixAddress, recovery.RequestId, recovery.CreatedAt,
-		nonce.Address, nonce.Hash, original.RequestId,
-	)
-	if err != nil {
-		return fmt.Errorf("SQLite3Store UPDATE nonce_accounts %v", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil || rows != 1 {
-		return fmt.Errorf("failed to occupy recovery nonce account: %d %v", rows, err)
+	if observer {
+		result, err := tx.ExecContext(ctx, `UPDATE nonce_accounts
+			SET mix=?, call_id=?, updated_at=?
+			WHERE address=? AND hash=? AND (call_id IS NULL OR call_id=?)`,
+			user.MixAddress, recovery.RequestId, recovery.CreatedAt,
+			nonce.Address, nonce.Hash, original.RequestId,
+		)
+		if err != nil {
+			return fmt.Errorf("SQLite3Store UPDATE nonce_accounts %v", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil || rows != 1 {
+			return fmt.Errorf("failed to occupy recovery nonce account: %d %v", rows, err)
+		}
 	}
 
 	err = insertMigrationProperty(ctx, tx, recoverySystemCallMigrationKey, recovery.RequestId, recovery.CreatedAt)
@@ -134,7 +153,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func buildRecoverySystemCall(original *SystemCall, user *User, nonce *NonceAccount) (*SystemCall, error) {
+func recoveryTransactionContextFromOriginal(original *SystemCall) (*recoveryTransactionContext, error) {
 	originalTx, err := solana.TransactionFromBase64(original.Raw)
 	if err != nil {
 		return nil, fmt.Errorf("invalid original system call transaction: %w", err)
@@ -154,9 +173,16 @@ func buildRecoverySystemCall(original *SystemCall, user *User, nonce *NonceAccou
 	if advance.GetNonceAuthorityAccount().PublicKey != payer {
 		return nil, fmt.Errorf("original nonce authority is not the fee payer")
 	}
-	if originalTx.Message.RecentBlockhash.String() != nonce.Hash {
-		return nil, fmt.Errorf("original and stored nonce hashes do not match")
-	}
+
+	return &recoveryTransactionContext{
+		payer:        payer,
+		nonceAddress: advance.GetNonceAccount().PublicKey,
+		nonceHash:    originalTx.Message.RecentBlockhash,
+	}, nil
+}
+
+func buildRecoverySystemCall(original *SystemCall, user *User, txContext *recoveryTransactionContext) (*SystemCall, error) {
+	payer := txContext.payer
 
 	source, err := solana.PublicKeyFromBase58(user.ChainAddress)
 	if err != nil {
@@ -170,18 +196,9 @@ func buildRecoverySystemCall(original *SystemCall, user *User, nonce *NonceAccou
 		return nil, fmt.Errorf("recovery source and destination are identical")
 	}
 
-	nonceAddress, err := solana.PublicKeyFromBase58(nonce.Address)
-	if err != nil {
-		return nil, fmt.Errorf("invalid recovery nonce address: %w", err)
-	}
-	nonceHash, err := solana.HashFromBase58(nonce.Hash)
-	if err != nil {
-		return nil, fmt.Errorf("invalid recovery nonce hash: %w", err)
-	}
-
 	instructions := []solana.Instruction{
 		system.NewAdvanceNonceAccountInstruction(
-			nonceAddress,
+			txContext.nonceAddress,
 			solana.SysVarRecentBlockHashesPubkey,
 			payer,
 		).Build(),
@@ -207,7 +224,7 @@ func buildRecoverySystemCall(original *SystemCall, user *User, nonce *NonceAccou
 		destination,
 	).Build())
 
-	recoveryTx, err := solana.NewTransaction(instructions, nonceHash, solana.TransactionPayer(payer))
+	recoveryTx, err := solana.NewTransaction(instructions, txContext.nonceHash, solana.TransactionPayer(payer))
 	if err != nil {
 		return nil, fmt.Errorf("build recovery transaction: %w", err)
 	}
@@ -229,7 +246,7 @@ func buildRecoverySystemCall(original *SystemCall, user *User, nonce *NonceAccou
 		Superior:        common.UniqueId(original.RequestId, "recover all balances"),
 		RequestHash:     original.RequestHash,
 		Type:            CallTypeMain,
-		NonceAccount:    nonce.Address,
+		NonceAccount:    txContext.nonceAddress.String(),
 		Public:          hex.EncodeToString(user.FingerprintWithPath()),
 		SkipPostProcess: true,
 		MessageHash:     crypto.Sha256Hash(message).String(),
