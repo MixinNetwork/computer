@@ -1,9 +1,11 @@
 package solana
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -28,6 +30,15 @@ type ReferencedTxAsset struct {
 	AssetId string
 	ChainId string
 	Fee     bool
+}
+
+func systemCallReferenceOutputStateValue(state int64) byte {
+	// Failed system calls may be replayed after compaction; the first attempt has
+	// already moved their references from pending to done.
+	if state == common.RequestStateFailed {
+		return common.RequestStateDone
+	}
+	return common.RequestStatePending
 }
 
 // should only return error when mtg could not find outputs from referenced transaction
@@ -73,7 +84,7 @@ func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, reques
 		if storage == nil {
 			storage = hash
 		} else if storage.String() != hash.String() {
-			panic(storage.String())
+			return nil, nil, fmt.Errorf("multiple storage references: %s != %s", storage.String(), hash.String())
 		}
 	}
 	return outputs, storage, nil
@@ -135,6 +146,25 @@ func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string
 // be used to create prepare call by observer with fee from payer (isolatedFee = true)
 // be used to create post call by observer with fee to calculate rest SOL
 func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.UserOutput) []*ReferencedTxAsset {
+	assets := aggregateSystemCallReferenceAssets(os)
+	for _, asset := range assets {
+		if asset.Solana {
+			continue
+		}
+		deployed, err := node.store.ReadDeployedAsset(ctx, asset.AssetId)
+		if err != nil || deployed == nil {
+			panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v %v", asset.AssetId, deployed, err))
+		}
+		asset.Address = deployed.Address
+		asset.Decimal = solanaApp.AssetDecimal
+	}
+	return assets
+}
+
+// Aggregate asset identity and amount without requiring a Solana mint mapping.
+// GetSystemCallRelatedAsset fills that mapping for Solana transactions, while
+// failed calls can use the aggregate directly for Mixin refunds.
+func aggregateSystemCallReferenceAssets(os []*store.UserOutput) []*ReferencedTxAsset {
 	am := make(map[string]*ReferencedTxAsset)
 	for _, output := range os {
 		logger.Printf("node.GetReferencedTxAsset() => %v", output)
@@ -143,11 +173,7 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 		address := output.Asset.AssetKey
 		decimal := output.Asset.Precision
 		if !isSolAsset {
-			da, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
-			if err != nil || da == nil {
-				panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v %v", output.AssetId, da, err))
-			}
-			address = da.Address
+			address = ""
 			decimal = solanaApp.AssetDecimal
 		}
 		ra := &ReferencedTxAsset{
@@ -172,29 +198,76 @@ func (node *Node) GetSystemCallRelatedAsset(ctx context.Context, os []*store.Use
 		}
 		assets = append(assets, a)
 	}
+	// Callers persist the ordered transactions and select the first asset with
+	// insufficient balance for compaction, so map iteration order is unsafe here.
+	slices.SortFunc(assets, func(a, b *ReferencedTxAsset) int {
+		return strings.Compare(a.AssetId, b.AssetId)
+	})
 	return assets
+}
+
+func (node *Node) validateSystemCallParameters(ctx context.Context, req *store.Request, os []*store.UserOutput) error {
+	if req == nil {
+		return fmt.Errorf("missing system call request")
+	}
+	_, err := node.readSystemCallFeeInfo(ctx, req)
+	if err != nil {
+		return err
+	}
+	return node.validateSystemCallReferencedAssets(ctx, os)
+}
+
+func (node *Node) validateSystemCallReferencedAssets(ctx context.Context, os []*store.UserOutput) error {
+	checked := make(map[string]bool)
+	for _, output := range os {
+		if output.ChainId == solanaApp.SolanaChainBase || checked[output.AssetId] {
+			continue
+		}
+		checked[output.AssetId] = true
+		deployed, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
+		if err != nil {
+			panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v", output.AssetId, err))
+		}
+		if deployed == nil {
+			return fmt.Errorf("external asset is not deployed: %s", output.AssetId)
+		}
+	}
+	return nil
+}
+
+func (node *Node) readSystemCallFeeInfo(ctx context.Context, req *store.Request) (*store.FeeInfo, error) {
+	extra := req.ExtraBytes()
+	switch len(extra) {
+	case 25:
+		return nil, nil
+	case 41:
+	default:
+		return nil, fmt.Errorf("invalid system call extra length: %d", len(extra))
+	}
+
+	feeId := uuid.Must(uuid.FromBytes(extra[25:])).String()
+	fee, err := node.store.ReadFeeInfoById(ctx, feeId)
+	logger.Printf("store.ReadFeeInfoById(%s) => %v %v", feeId, fee, err)
+	if err != nil {
+		panic(fmt.Errorf("store.ReadFeeInfoById(%s) => %v", feeId, err))
+	}
+	if fee == nil { // TODO check fee timestamp against the call timestamp not too old
+		return nil, fmt.Errorf("invalid fee id: %s", feeId)
+	}
+	return fee, nil
 }
 
 // should only return error when no valid fees found
 func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.SystemCall) (*store.UserOutput, error) {
 	req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
-	if err != nil {
-		panic(err)
+	if err != nil || req == nil {
+		panic(fmt.Errorf("store.ReadRequestByHash(%s) => %v %v", call.RequestHash, req, err))
 	}
-	extra := req.ExtraBytes()
-	if len(extra) != 41 {
+	fee, err := node.readSystemCallFeeInfo(ctx, req)
+	if err != nil {
+		return nil, err
+	} else if fee == nil {
 		return nil, nil
-	}
-	feeId := uuid.Must(uuid.FromBytes(extra[25:])).String()
-
-	var fee *store.FeeInfo
-	fee, err = node.store.ReadFeeInfoById(ctx, feeId)
-	logger.Printf("store.ReadFeeInfoById(%s) => %v %v", feeId, fee, err)
-	if err != nil {
-		panic(err)
-	}
-	if fee == nil { // TODO check fee timestamp against the call timestamp not too old
-		return nil, fmt.Errorf("invalid fee id: %s", feeId)
 	}
 
 	ratio := decimal.RequireFromString(fee.Ratio)
@@ -265,13 +338,22 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, fmt.Errorf("store.ReadUser(%s) => nil", main.UserIdFromPublicPath())
 	}
 	mtgDeposit := solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
+	authority := node.getUserSolanaPublicKeyFromCall(ctx, post)
+	if call.Type == store.CallTypePrepare {
+		authority = node.getMTGAddress(ctx)
+	}
+	err = node.VerifySubSystemCallEnvelope(tx, authority)
+	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", post.RequestId, err)
+	if err != nil {
+		return nil, err
+	}
 	err = node.VerifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress))
 	logger.Printf("node.VerifySubSystemCall(%s) => %v", user.ChainAddress, err)
 	if err != nil {
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, 0)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(main.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
 	}
@@ -285,9 +367,92 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 			return nil, err
 		}
 	case FlagConfirmCallFail:
-		// TODO compare with user outputs
+		err = node.verifyFailedPostProcessCall(ctx, call, main, post, tx)
+		logger.Printf("node.verifyFailedPostProcessCall(%s) => %v", call.RequestId, err)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return post, nil
+}
+
+func (node *Node) verifyFailedPostProcessCall(ctx context.Context, call, main, post *store.SystemCall, actual *solana.Transaction) error {
+	nonce := &store.NonceAccount{
+		Address: post.NonceAccount,
+		Hash:    actual.Message.RecentBlockhash.String(),
+	}
+	var expected *solana.Transaction
+	switch call.Type {
+	case store.CallTypeMain:
+		expected = node.CreatePostProcessTransaction(ctx, main, nonce, nil, nil)
+	case store.CallTypePrepare:
+		expected = node.CreateRefundWithdrawalTransaction(ctx, call, main, nonce)
+	default:
+		return fmt.Errorf("invalid failed post-process superior type: %s", call.Type)
+	}
+	if expected == nil {
+		return fmt.Errorf("unexpected failed post-process transaction")
+	}
+	return compareCleanupTransactions(actual, expected)
+}
+
+func compareCleanupTransactions(actual, expected *solana.Transaction) error {
+	if len(actual.Message.AccountKeys) == 0 || len(expected.Message.AccountKeys) == 0 {
+		return fmt.Errorf("cleanup transaction has no fee payer")
+	}
+	if actual.Message.AccountKeys[0] != expected.Message.AccountKeys[0] {
+		return fmt.Errorf("invalid cleanup fee payer: %s", actual.Message.AccountKeys[0])
+	}
+	if !slices.Equal(actual.Message.Signers(), expected.Message.Signers()) {
+		return fmt.Errorf("invalid cleanup signers: %v", actual.Message.Signers())
+	}
+	if len(actual.Message.Instructions) != len(expected.Message.Instructions) {
+		return fmt.Errorf("invalid cleanup instruction count: %d %d", len(actual.Message.Instructions), len(expected.Message.Instructions))
+	}
+
+	for i, actualIx := range actual.Message.Instructions {
+		expectedIx := expected.Message.Instructions[i]
+		actualProgram, err := actual.Message.Program(actualIx.ProgramIDIndex)
+		if err != nil {
+			return fmt.Errorf("resolve cleanup program %d: %w", i, err)
+		}
+		expectedProgram, err := expected.Message.Program(expectedIx.ProgramIDIndex)
+		if err != nil {
+			return fmt.Errorf("resolve expected cleanup program %d: %w", i, err)
+		}
+		if actualProgram != expectedProgram {
+			return fmt.Errorf("invalid cleanup program %d: %s", i, actualProgram)
+		}
+
+		actualAccounts, err := actualIx.ResolveInstructionAccounts(&actual.Message)
+		if err != nil {
+			return fmt.Errorf("resolve cleanup accounts %d: %w", i, err)
+		}
+		expectedAccounts, err := expectedIx.ResolveInstructionAccounts(&expected.Message)
+		if err != nil {
+			return fmt.Errorf("resolve expected cleanup accounts %d: %w", i, err)
+		}
+		if len(actualAccounts) != len(expectedAccounts) {
+			return fmt.Errorf("invalid cleanup account count %d: %d %d", i, len(actualAccounts), len(expectedAccounts))
+		}
+		for j := range actualAccounts {
+			a, e := actualAccounts[j], expectedAccounts[j]
+			if a.PublicKey != e.PublicKey || a.IsSigner != e.IsSigner || a.IsWritable != e.IsWritable {
+				return fmt.Errorf("invalid cleanup account %d:%d: %s", i, j, a.PublicKey)
+			}
+		}
+
+		if i == 1 && actualProgram == solana.ComputeBudget {
+			if len(actualIx.Data) != 9 || len(expectedIx.Data) != 9 || actualIx.Data[0] != expectedIx.Data[0] {
+				return fmt.Errorf("invalid compute budget instruction")
+			}
+			continue
+		}
+		if !bytes.Equal(actualIx.Data, expectedIx.Data) {
+			return fmt.Errorf("invalid cleanup instruction data: %d", i)
+		}
+	}
+	return nil
 }
 
 func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Request, data []byte) (*store.SystemCall, *solana.Transaction, error) {
@@ -298,7 +463,7 @@ func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Requ
 	return node.buildSystemCallFromBytes(ctx, req, id, raw, true)
 }
 
-// should only return error when fail to parse nonce advance instruction;
+// should only return error when fail to resolve address lookups or parse nonce advance instruction;
 // without fields of superior, type, public, skip_postprocess
 func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Request, id string, raw []byte, withdrawn bool) (*store.SystemCall, *solana.Transaction, error) {
 	tx, err := solana.TransactionFromBytes(raw)
@@ -308,6 +473,9 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
 	if err != nil {
+		if errors.Is(err, errInvalidAddressLookup) {
+			return nil, nil, err
+		}
 		panic(err)
 	}
 	advance, err := solanaApp.NonceAccountFromTx(tx)

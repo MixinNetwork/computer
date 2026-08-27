@@ -20,6 +20,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const solanaInnerIndexBase = int64(1_000_000_000)
+
 func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent uint64) (*solana.Transaction, error) {
 	payer, err := solana.PrivateKeyFromBase58(key)
 	if err != nil {
@@ -388,12 +390,19 @@ func (c *Client) getPriorityFeeInstruction(ctx context.Context) *computebudget.I
 	if err != nil {
 		panic(err)
 	}
+	fee := getAveragePriorityFee(recentFees)
+	return computebudget.NewSetComputeUnitPriceInstruction(fee).Build()
+}
+
+func getAveragePriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
+	if len(recentFees) == 0 {
+		return 1000
+	}
 	total := decimal.NewFromInt(0)
 	for _, fee := range recentFees {
 		total = total.Add(decimal.NewFromUint64(fee.PrioritizationFee))
 	}
-	fee := total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
-	return computebudget.NewSetComputeUnitPriceInstruction(fee).Build()
+	return total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
 }
 
 func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, exception *solana.PublicKey) ([]*Transfer, error) {
@@ -440,13 +449,12 @@ func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction
 	}
 
 	for index, ix := range msg.Instructions {
-		baseIndex := int64(index+1) * 10000
 		if transfer := extractTransfersFromInstruction(&msg, ix, tokenAccounts, owners, transfers); transfer != nil {
 			if exception != nil && exception.String() == transfer.Receiver {
 				continue
 			}
 			transfer.Signature = hash
-			transfer.Index = baseIndex
+			transfer.Index = int64(index)
 			transfers = append(transfers, transfer)
 		}
 
@@ -456,7 +464,7 @@ func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction
 					continue
 				}
 				transfer.Signature = hash
-				transfer.Index = baseIndex + int64(innerIndex) + 1
+				transfer.Index = (int64(index)+1)*solanaInnerIndexBase + int64(innerIndex)
 				transfers = append(transfers, transfer)
 			}
 		}
@@ -472,9 +480,22 @@ func ExtractTransferFromTransactionByIndex(ctx context.Context, tx *solana.Trans
 	msg := tx.Message
 
 	var (
-		tokenAccounts = map[solana.PublicKey]token.Account{}
-		owners        = []*solana.PublicKey{}
+		innerInstructions = map[uint16][]solana.CompiledInstruction{}
+		tokenAccounts     = map[solana.PublicKey]token.Account{}
+		owners            = []*solana.PublicKey{}
 	)
+
+	for _, inner := range meta.InnerInstructions {
+		sis := make([]solana.CompiledInstruction, len(inner.Instructions))
+		for idx, ii := range inner.Instructions {
+			sis[idx] = solana.CompiledInstruction{
+				ProgramIDIndex: ii.ProgramIDIndex,
+				Accounts:       ii.Accounts,
+				Data:           ii.Data,
+			}
+		}
+		innerInstructions[inner.Index] = sis
+	}
 
 	bs := meta.PreTokenBalances
 	bs = append(bs, meta.PostTokenBalances...)
@@ -492,7 +513,36 @@ func ExtractTransferFromTransactionByIndex(ctx context.Context, tx *solana.Trans
 		}
 	}
 
-	return extractTransfersFromInstruction(&msg, msg.Instructions[index], tokenAccounts, owners, nil)
+	ix, ok := instructionByTransferIndex(&msg, innerInstructions, index)
+	if !ok {
+		return nil
+	}
+	return extractTransfersFromInstruction(&msg, ix, tokenAccounts, owners, nil)
+}
+
+func instructionByTransferIndex(msg *solana.Message, innerInstructions map[uint16][]solana.CompiledInstruction, index int64) (solana.CompiledInstruction, bool) {
+	if index < 0 {
+		return solana.CompiledInstruction{}, false
+	}
+
+	if index < solanaInnerIndexBase {
+		if index >= int64(len(msg.Instructions)) {
+			return solana.CompiledInstruction{}, false
+		}
+		return msg.Instructions[index], true
+	}
+
+	outerIndex := index/solanaInnerIndexBase - 1
+	if outerIndex < 0 || outerIndex >= int64(len(msg.Instructions)) {
+		return solana.CompiledInstruction{}, false
+	}
+
+	innerIndex := index % solanaInnerIndexBase
+	inners := innerInstructions[uint16(outerIndex)]
+	if innerIndex < 0 || innerIndex >= int64(len(inners)) {
+		return solana.CompiledInstruction{}, false
+	}
+	return inners[innerIndex], true
 }
 
 func ExtractMintsFromTransaction(tx *solana.Transaction) []string {

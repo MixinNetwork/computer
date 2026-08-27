@@ -12,6 +12,7 @@ import (
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
+	"github.com/gagliardetto/solana-go"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -43,6 +44,81 @@ const (
 	OperationTypeSignPrepare  = 21
 	OperationTypeSignOutput   = 22
 )
+
+const confirmCallRecordSize = 1 + uuid.Size + solana.SignatureLength
+
+type confirmCallRecord struct {
+	Status    byte
+	CallId    string
+	Signature solana.Signature
+}
+
+func encodeConfirmCallRecords(records []confirmCallRecord) []byte {
+	if len(records) == 0 || len(records) > 2 {
+		panic(fmt.Errorf("invalid confirm call record count: %d", len(records)))
+	}
+	extra := []byte{byte(len(records))}
+	for _, record := range records {
+		if record.Status != FlagConfirmCallFail && record.Status != FlagConfirmCallSuccess {
+			panic(fmt.Errorf("invalid confirm call status: %d", record.Status))
+		}
+		extra = append(extra, record.Status)
+		extra = append(extra, uuid.Must(uuid.FromString(record.CallId)).Bytes()...)
+		extra = append(extra, record.Signature[:]...)
+	}
+	return extra
+}
+
+func decodeConfirmCallRecords(extra []byte) ([]confirmCallRecord, []byte, error) {
+	if len(extra) < 1 {
+		return nil, nil, fmt.Errorf("missing confirm call record count")
+	}
+	n := int(extra[0])
+	if n == 0 || n > 2 {
+		return nil, nil, fmt.Errorf("invalid confirm call record count: %d", n)
+	}
+	extra = extra[1:]
+	if len(extra) < n*confirmCallRecordSize {
+		return nil, nil, fmt.Errorf("invalid confirm call record payload length: %d", len(extra))
+	}
+	records := make([]confirmCallRecord, 0, n)
+	for range n {
+		status := extra[0]
+		if status != FlagConfirmCallFail && status != FlagConfirmCallSuccess {
+			return nil, nil, fmt.Errorf("invalid confirm call status: %d", status)
+		}
+		callId, err := uuid.FromBytes(extra[1 : 1+uuid.Size])
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid confirm call id: %w", err)
+		}
+		signature := solana.SignatureFromBytes(extra[1+uuid.Size : confirmCallRecordSize])
+		records = append(records, confirmCallRecord{
+			Status:    status,
+			CallId:    callId.String(),
+			Signature: signature,
+		})
+		extra = extra[confirmCallRecordSize:]
+	}
+	return records, extra, nil
+}
+
+func validateConfirmCallStorage(storage []byte) error {
+	if len(storage) == 0 {
+		return nil
+	}
+	if len(storage) < uuid.Size {
+		return fmt.Errorf("invalid confirm call storage length: %d", len(storage))
+	}
+	_, err := uuid.FromBytes(storage[:uuid.Size])
+	if err != nil {
+		return fmt.Errorf("invalid post call id: %v", err)
+	}
+	_, err = solana.TransactionFromBytes(storage[uuid.Size:])
+	if err != nil {
+		return fmt.Errorf("invalid post call transaction: %v", err)
+	}
+	return nil
+}
 
 func decodeRequest(out *mtg.Action, extra []byte, role uint8) (*store.Request, error) {
 	h, err := crypto.HashFromString(out.TransactionHash)
@@ -147,7 +223,8 @@ func (node *Node) buildRefundTxs(ctx context.Context, req *store.Request, id str
 		trace := common.UniqueId(id, memo)
 		t := node.buildTransaction(ctx, req.Output, node.conf.AppId, assetId, receivers, threshold, as.Amount.String(), []byte(memo), trace)
 		if t == nil {
-			// TODO then all other assets ignored?
+			// Reference assets are sorted by AssetId during aggregation, so the
+			// lexicographically smallest insufficient asset is selected for compaction.
 			return nil, assetId
 		}
 		txs = append(txs, t)

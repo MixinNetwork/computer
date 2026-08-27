@@ -5,6 +5,7 @@ package solana
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -270,6 +271,10 @@ func (node *Node) httpLockNonce(w http.ResponseWriter, r *http.Request, params m
 
 	err = node.store.LockNonceAccountWithMix(ctx, nonce.Address, body.Mix)
 	if err != nil {
+		if errors.Is(err, store.ErrNonceAccountLimit) {
+			common.RenderJSON(w, r, http.StatusTooManyRequests, map[string]any{"error": "nonce limit"})
+			return
+		}
 		common.RenderError(w, r, err)
 		return
 	}

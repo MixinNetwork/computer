@@ -230,8 +230,8 @@ func (s *SQLite3Store) ResetRequest(ctx context.Context, reqId string, reqSequen
 	}
 	defer common.Rollback(tx)
 
-	_, err = tx.ExecContext(ctx, "UPDATE requests SET state=?, sequence=?, updated_at=? WHERE request_id=? AND state=?",
-		common.RequestStateInitial, reqSequence, time.Now().UTC(), reqId, common.RequestStateFailed)
+	err = s.execOne(ctx, tx, "UPDATE requests SET state=?, sequence=?, updated_at=? WHERE request_id=? AND (state=? OR state=?)",
+		common.RequestStateInitial, reqSequence, time.Now().UTC(), reqId, common.RequestStateFailed, common.RequestStateDone)
 	if err != nil {
 		return fmt.Errorf("UPDATE requests %v", err)
 	}

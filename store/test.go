@@ -69,6 +69,28 @@ func (s *SQLite3Store) TestWriteCall(ctx context.Context, call *SystemCall) erro
 	return tx.Commit()
 }
 
+func (s *SQLite3Store) TestSetRequestState(ctx context.Context, id string, state byte) error {
+	if !common.CheckTestEnvironment(ctx) {
+		panic(ctx)
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	err = s.execOne(ctx, tx, "UPDATE requests SET state=?, updated_at=? WHERE request_id=?",
+		state, time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("UPDATE requests %v", err)
+	}
+
+	return tx.Commit()
+}
+
 func (s *SQLite3Store) TestWriteSignSession(ctx context.Context, call *SystemCall, sessions []*Session) error {
 	if !common.CheckTestEnvironment(ctx) {
 		panic(ctx)
