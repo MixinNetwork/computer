@@ -187,6 +187,9 @@ func (n *testNetwork) msgChannel(id party.ID) chan []byte {
 }
 
 func getTestSystemConfirmCallMessage(signature string) string {
+	if signature == "sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg" {
+		return "5633425be1fd091410daaae53cfc9ced98b27dd58f599cb6c7f41d189d6e8250"
+	}
 	if signature == "2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb" {
 		return "5633425be1fd091410daaae53cfc9ced98b27dd58f599cb6c7f41d189d6e8250"
 	}
@@ -197,6 +200,10 @@ func getTestSystemConfirmCallMessage(signature string) string {
 		return "f191e4b41d4a0fe93bae0c245df607ba82f4c2bfbf0d4932c61af14e53f56582"
 	}
 	return ""
+}
+
+func isTestFailedSystemConfirmCall(signature string) bool {
+	return signature == "sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg"
 }
 
 var (

@@ -39,6 +39,7 @@ func MonitorComputer(ctx context.Context, node *computer.Node, mixin *mixin.Clie
 	if err != nil {
 		panic(err)
 	}
+	sessionStore := bot.NewMapSessionStore()
 
 	for {
 		time.Sleep(1 * time.Minute)
@@ -47,7 +48,7 @@ func MonitorComputer(ctx context.Context, node *computer.Node, mixin *mixin.Clie
 			logger.Verbosef("Monitor.bundleComputerState() => %v", err)
 			continue
 		}
-		postMessages(ctx, store, conv, conf.MTG, msg, conf.ObserverId)
+		postMessages(ctx, store, sessionStore, conv, conf.MTG, msg, conf.ObserverId)
 		time.Sleep(3 * time.Minute)
 	}
 }
@@ -62,7 +63,7 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 	if err != nil {
 		return "", err
 	} else if req != nil {
-		state = state + fmt.Sprintf("🎆 Latest request: %x\n", req.MixinHash[:8])
+		state = state + fmt.Sprintf("🎆 Latest request: %s\n", req.MixinHash)
 	}
 
 	tl, _, err := mdb.ListTransactions(ctx, mtg.TransactionStateInitial, 1000)
@@ -171,7 +172,7 @@ func bundleComputerState(ctx context.Context, node *computer.Node, mixin *mixin.
 	return state, nil
 }
 
-func postMessages(ctx context.Context, store UserStore, conv *bot.Conversation, conf *mtg.Configuration, msg, observer string) {
+func postMessages(ctx context.Context, store UserStore, sessionStore bot.SessionStore, conv *bot.Conversation, conf *mtg.Configuration, msg, observer string) {
 	app := conf.App
 	var messages []*bot.MessageRequest
 	for i := range conv.Participants {
@@ -187,12 +188,12 @@ func postMessages(ctx context.Context, store UserStore, conv *bot.Conversation, 
 		messages = append(messages, &bot.MessageRequest{
 			ConversationId: conv.ConversationId,
 			RecipientId:    s.UserId,
-			Category:       bot.MessageCategoryPlainText,
+			Category:       bot.MessageCategoryEncryptedText,
 			MessageId:      common.UniqueId(msg, s.UserId),
 			DataBase64:     base64.RawURLEncoding.EncodeToString([]byte(msg)),
 		})
 	}
-	err := bot.PostMessages(ctx, messages, &bot.SafeUser{
+	err := bot.PostEncryptedMessages(ctx, messages, sessionStore, &bot.SafeUser{
 		UserId:            app.AppId,
 		SessionId:         app.SessionId,
 		SessionPrivateKey: app.SessionPrivateKey,

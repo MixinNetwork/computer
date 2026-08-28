@@ -88,7 +88,7 @@ func TestCompaction(t *testing.T) {
 	oid1, err := uuid.NewV4()
 	require.Nil(err)
 	extra = user.IdBytes()
-	out1 := testBuildUserRequest(node, oid1.String(), h1.String(), "0.90432841", mtg.StorageAssetId, OperationTypeUserDeposit, extra, nil, nil)
+	out1 := testBuildUserRequest(node, user.MixAddress, oid1.String(), h1.String(), "0.90432841", mtg.StorageAssetId, OperationTypeUserDeposit, extra, nil, nil)
 	for _, node := range nodes {
 		err = node.store.WriteProperty(ctx, h1.String(), "77770005a99c2e0e2b1da4d648755ef19bd95139acbbe6564cfb06dec7cd34931ca72cdc0001b98ecfc9b5b8c01e1e94a13c05866eb0bc33c7706ed306c9da60a016945eeddd00000000000000000002000000040563e54900071ede9c0d0680d843eb373883ee7383e6f47b7c5720d8e8176139ba0497893aeb6cc3ba624218f1a144ee98de1426a701b45a6dd7211c52b7e87924d751c58cb95f6e7f7a7d1e8017cda22caec31032aeaf239193093e22bcaf9ca742bf42e60ffb9692f26790ca3e0c11ff06937b2127c26791103d0400e125f698a78f6a8b6ab53fdf5e98ea926e41467a78f3b0a3bf68d1a071033091120280dc29c4d46f37151ec76daeb9cb7b49de47caee7196089a45858e68f4e565637b880877597352b9ea3473d8731e19d54459ca3a5f4793c66898510d15ef88a884b6b69fb6a568d073cff9ad3055d6311a97f81f0123e5e8f42284e2928e1099e1f036489aa5290003fffe050000000000033f50830001a3ec1d124a090ed27c235eaabab677e56dde5ba333397a49c6866285d6a8819c5933073ce8b01423b28160348a022059b77a0ee4f4c737fe0f94f055e7e0a6b30003fffe01000000000000002243735f696548465054507975556e444f4e4f507245514d414151414141414141425100010001000065b555876b9158e109739a09bdd1d69026d42f66290fa7c4e8cf95551d7e12a07d0ae2b04f7dceac3bd6893c0cfe9ec49ce8ebf512ba07be1cd859433785ca03")
 		require.Nil(err)
@@ -106,7 +106,7 @@ func TestCompaction(t *testing.T) {
 	extra = user.IdBytes()
 	extra = append(extra, uuid.Must(uuid.FromString(cid)).Bytes()...)
 	extra = append(extra, FlagWithPostProcess)
-	out = testBuildUserRequest(node, cid, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, nil)
+	out = testBuildUserRequest(node, user.MixAddress, cid, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, nil)
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 		call, err := node.store.ReadSystemCallByRequestId(ctx, cid, common.RequestStateInitial)
@@ -245,13 +245,16 @@ func TestPostprocessCompaction(t *testing.T) {
 	user := testUserRequestAddUsers(ctx, require, nodes)
 	call := testUserRequestSystemCall(ctx, require, nodes, mds, user)
 	testConfirmWithdrawal(ctx, require, nodes, call)
-	testObserverConfirmMainCall(ctx, require, nodes, call)
+	sub := testObserverConfirmMainCall(ctx, require, nodes, call)
 
 	node := nodes[0]
 	id := "329346e1-34c2-4de0-8e35-729518eda8bd"
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
-	extra := []byte{FlagConfirmCallSuccess, 1}
-	extra = append(extra, signature[:]...)
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallSuccess,
+		CallId:    sub.RequestId,
+		Signature: signature,
+	}})
 	out := testBuildObserverRequest(node, id, OperationTypeConfirmCall, extra)
 
 	for i := range 2 {
@@ -287,6 +290,132 @@ func TestPostprocessCompaction(t *testing.T) {
 	}
 }
 
+func TestFailedPostprocessCompaction(t *testing.T) {
+	require := require.New(t)
+	ctx, nodes, mds := testPrepare(require, false)
+
+	testObserverRequestGenerateKey(ctx, require, nodes)
+	testObserverRequestCreateNonceAccount(ctx, require, nodes)
+	testObserverSetPriceParams(ctx, require, nodes)
+	testObserverUpdateNetworInfo(ctx, require, nodes)
+	testObserverDeployLitecoinAsset(ctx, require, nodes)
+	user := testUserRequestAddUsers(ctx, require, nodes)
+	main := testUserRequestSystemCall(ctx, require, nodes, mds, user)
+
+	node := nodes[0]
+	prepareId := common.UniqueId(main.RequestId, "prepare")
+	prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStatePending)
+	require.Nil(err)
+	require.NotNil(prepare)
+
+	confirmId := common.UniqueId(prepare.RequestId, "confirm-fail")
+	postId := common.UniqueId(confirmId, "post-process")
+	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
+	postTx := node.CreateRefundWithdrawalTransaction(ctx, prepare, main, nonce)
+	require.NotNil(postTx)
+	raw, err := postTx.MarshalBinary()
+	require.Nil(err)
+
+	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
+	successSignature := solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb")
+	rejectedExtras := [][]byte{
+		// Prepare is never confirmed successfully without its Main call.
+		encodeConfirmCallRecords([]confirmCallRecord{{
+			Status:    FlagConfirmCallSuccess,
+			CallId:    prepare.RequestId,
+			Signature: successSignature,
+		}}),
+		// This failed Prepare has refundable Solana withdrawals, so omitting its
+		// refund transaction must not advance either call.
+		encodeConfirmCallRecords([]confirmCallRecord{{
+			Status:    FlagConfirmCallFail,
+			CallId:    prepare.RequestId,
+			Signature: failedSignature,
+		}}),
+	}
+	for _, rejectedExtra := range rejectedExtras {
+		rejected := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), OperationTypeConfirmCall, rejectedExtra)
+		for _, node := range nodes {
+			testStep(ctx, require, node, rejected)
+			prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStatePending)
+			require.Nil(err)
+			require.NotNil(prepare)
+			main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStatePending)
+			require.Nil(err)
+			require.NotNil(main)
+		}
+	}
+
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallFail,
+		CallId:    prepare.RequestId,
+		Signature: failedSignature,
+	}})
+	extra = attachSystemCall(extra, postId, raw)
+	out := testBuildObserverRequest(node, "329346e1-34c2-4de0-8e35-729518eda8bd", OperationTypeConfirmCall, extra)
+
+	testSpendAllGroupOutputs(ctx, require, nodes, common.SafeLitecoinChainId)
+
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(prepare)
+		main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(main)
+		outputs, _, err := node.GetSystemCallReferenceOutputs(ctx, user.UserId, main.RequestHash, common.RequestStateDone)
+		require.Nil(err)
+		require.Len(outputs, 2)
+		sub, err := node.store.ReadSystemCallByRequestId(ctx, postId, common.RequestStatePending)
+		require.Nil(err)
+		require.NotNil(sub)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, out.OutputId)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal(common.SafeLitecoinChainId, ar.Compaction)
+		require.Len(ar.Transactions, 0)
+		req, err := node.store.ReadRequest(ctx, out.OutputId)
+		require.Nil(err)
+		require.Equal(uint8(common.RequestStateFailed), req.State)
+	}
+
+	// Simulate a compacted failure persisted by older nodes before the request was
+	// left retryable.
+	err = nodes[0].store.TestSetRequestState(ctx, out.OutputId, common.RequestStateDone)
+	require.Nil(err)
+
+	sequence += 100
+	_, err = testWriteOutputForNodes(ctx, mds, node.conf.AppId, common.SafeLitecoinChainId, "", "", sequence, decimal.RequireFromString("0.0108"))
+	require.Nil(err)
+	out.Sequence = sequence
+
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		prepare, err := node.store.ReadSystemCallByRequestId(ctx, prepareId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(prepare)
+		main, err := node.store.ReadSystemCallByRequestId(ctx, main.RequestId, common.RequestStateFailed)
+		require.Nil(err)
+		require.NotNil(main)
+		require.Len(main.GetRefundIds(), 1)
+		outputs, _, err := node.GetSystemCallReferenceOutputs(ctx, user.UserId, main.RequestHash, common.RequestStateDone)
+		require.Nil(err)
+		require.Len(outputs, 2)
+		ar, handled, err := node.store.ReadActionResult(ctx, out.OutputId, out.OutputId)
+		require.Nil(err)
+		require.True(handled)
+		require.Equal("", ar.Compaction)
+		require.Len(ar.Transactions, 1)
+		require.Equal(common.SafeLitecoinChainId, ar.Transactions[0].AssetId)
+		req, err := node.store.ReadRequest(ctx, out.OutputId)
+		require.Nil(err)
+		require.Equal(uint8(common.RequestStateDone), req.State)
+	}
+}
+
 func testObserverConfirmPostProcessCall(ctx context.Context, require *require.Assertions, nodes []*Node, sub *store.SystemCall) {
 	node := nodes[0]
 	err := node.store.UpdateNonceAccount(ctx, sub.NonceAccount, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", sub.RequestId)
@@ -299,8 +428,11 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 
 	id := uuid.Must(uuid.NewV4()).String()
 	signature := solana.MustSignatureFromBase58("5s3UBMymdgDHwYvuaRdq9SLq94wj5xAgYEsDDB7TQwwuLy1TTYcSf6rF4f2fDfF7PnA9U75run6r1pKm9K1nusCR")
-	extra := []byte{FlagConfirmCallSuccess, 1}
-	extra = append(extra, signature[:]...)
+	extra := encodeConfirmCallRecords([]confirmCallRecord{{
+		Status:    FlagConfirmCallSuccess,
+		CallId:    sub.RequestId,
+		Signature: signature,
+	}})
 
 	err = node.store.WritePendingBurnSystemCallIfNotExists(ctx, sub, &common.Operation{
 		Id:    id,
@@ -368,11 +500,11 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
 		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
 	}
-	extra := []byte{FlagConfirmCallSuccess}
-	extra = append(extra, byte(len(signatures)))
-	for _, sig := range signatures {
-		extra = append(extra, sig[:]...)
-	}
+	prepareId := common.UniqueId(call.RequestId, "prepare")
+	extra := encodeConfirmCallRecords([]confirmCallRecord{
+		{Status: FlagConfirmCallSuccess, CallId: prepareId, Signature: signatures[0]},
+		{Status: FlagConfirmCallSuccess, CallId: call.RequestId, Signature: signatures[1]},
+	})
 	extra = attachSystemCall(extra, cid, raw)
 
 	var postprocess *store.SystemCall
@@ -441,14 +573,14 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	oid1, err := uuid.NewV4()
 	require.Nil(err)
 	extra := user.IdBytes()
-	out1 := testBuildUserRequest(node, oid1.String(), h1.String(), "0.01", common.SafeLitecoinChainId, OperationTypeUserDeposit, extra, nil, nil)
+	out1 := testBuildUserRequest(node, user.MixAddress, oid1.String(), h1.String(), "0.01", common.SafeLitecoinChainId, OperationTypeUserDeposit, extra, nil, nil)
 	sequence += 10
 	h2, _ := crypto.HashFromString("01c43005fd06e0b8f06a0af04faf7530331603e352a11032afd0fd9dbd84e8ee")
 	_, err = testWriteOutputForNodes(ctx, mds, conf.AppId, common.SafeSolanaChainId, h2.String(), "", sequence, decimal.RequireFromString("0.005"))
 	require.Nil(err)
 	oid2, err := uuid.NewV4()
 	require.Nil(err)
-	out2 := testBuildUserRequest(node, oid2.String(), h2.String(), "0.005", common.SafeSolanaChainId, OperationTypeUserDeposit, extra, nil, nil)
+	out2 := testBuildUserRequest(node, user.MixAddress, oid2.String(), h2.String(), "0.005", common.SafeSolanaChainId, OperationTypeUserDeposit, extra, nil, nil)
 	for _, node := range nodes {
 		err = node.store.WriteProperty(ctx, h1.String(), "7777000546dbd75ed416c82652554a2fd257df3adb5d8c68726db6631bf1300e7aa36f4100013db24d1350f18126b0f93309913d237fcb870f63fb42cafb3a7d0202aca77bd200000000000000000001000000030f4240000103551f38d1ae2002e06892803b57c838012123911681dc567564e63042c3377690b6636bc74fa394d9122c6af4415d4d151c9671eb82d43c096ea01635bc177f0003fffe01000000000000007854554638593251794e5745334d6a5174593249354d7930304d324d784c546c6d4e6a6774595746695a6d4e6a4d7a4d344f446334664656515245465552563950556b5246556e786d4e446730593255794f53307a596d597a4c5451354d5755744f44677a5a6930334e6d4935596a68694e6a526a4d32453d00010001000052bf7fb6ce4e61527b1cec54d8b705b66c24876d7f53672f9f398c30c20e57136fe4853a40ae7b02a81f038055a09a1e3b0034c62a06960934c38db41701c60b")
 		require.Nil(err)
@@ -483,7 +615,7 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	extra = append(extra, uuid.Must(uuid.FromString(id)).Bytes()...)
 	extra = append(extra, FlagWithPostProcess)
 	extra = append(extra, uuid.Must(uuid.FromString(fee.Id)).Bytes()...)
-	out := testBuildUserRequest(node, id, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, &xinFee)
+	out := testBuildUserRequest(node, user.MixAddress, id, hash, "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, extra, refs, &xinFee)
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 		call, err := node.store.ReadSystemCallByRequestId(ctx, id, common.RequestStateInitial)
@@ -564,7 +696,7 @@ func testUserRequestAddUsers(ctx context.Context, require *require.Assertions, n
 	for _, node := range nodes {
 		uid := common.UniqueId(id, "user1")
 		mix := bot.NewUUIDMixAddress([]string{uid}, 1)
-		out := testBuildUserRequest(node, id, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
+		out := testBuildUserRequest(node, mix.String(), id, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
 		testStep(ctx, require, node, out)
 		user1, err := node.store.ReadUserByMixAddress(ctx, mix.String())
 		require.Nil(err)
@@ -582,7 +714,7 @@ func testUserRequestAddUsers(ctx context.Context, require *require.Assertions, n
 		id2 := common.UniqueId(id, "second")
 		uid = common.UniqueId(id, "user2")
 		mix = bot.NewUUIDMixAddress([]string{uid}, 1)
-		out = testBuildUserRequest(node, id2, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
+		out = testBuildUserRequest(node, mix.String(), id2, "", "0.0001", mtg.StorageAssetId, OperationTypeAddUser, []byte(mix.String()), nil, nil)
 		testStep(ctx, require, node, out)
 		user2, err := node.store.ReadUserByMixAddress(ctx, mix.String())
 		require.Nil(err)
@@ -673,6 +805,35 @@ func testObserverSetPriceParams(ctx context.Context, require *require.Assertions
 		require.NotNil(params)
 		require.Equal(node.conf.OperationPriceAssetId, params.OperationPriceAsset)
 		require.Equal(node.conf.OperationPriceAmount, params.OperationPriceAmount.String())
+	}
+}
+
+func testObserverDeployLitecoinAsset(ctx context.Context, require *require.Assertions, nodes []*Node) {
+	extra := []byte{1}
+	extra = append(extra, uuid.Must(uuid.FromString(common.SafeLitecoinChainId)).Bytes()...)
+	extra = append(extra, solana.MustPublicKeyFromBase58("EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8").Bytes()...)
+
+	out := testBuildObserverRequest(nodes[0], uuid.Must(uuid.NewV4()).String(), OperationTypeDeployExternalAssets, extra)
+	for _, node := range nodes {
+		testStep(ctx, require, node, out)
+
+		asset, err := node.store.ReadDeployedAsset(ctx, common.SafeLitecoinChainId)
+		require.Nil(err)
+		require.NotNil(asset)
+		require.Equal("EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8", asset.Address)
+	}
+}
+
+func testSpendAllGroupOutputs(ctx context.Context, require *require.Assertions, nodes []*Node, assetId string) {
+	for _, node := range nodes {
+		for {
+			os := node.group.ListOutputsForAsset(ctx, node.conf.AppId, assetId, 0, sequence, mtg.SafeUtxoStateUnspent, mtg.OutputsBatchSize)
+			if len(os) == 0 {
+				break
+			}
+			err := node.group.TestUpdateOutputsState(ctx, os, "spent")
+			require.Nil(err)
+		}
 	}
 }
 
@@ -812,10 +973,14 @@ func testObserverRequestSignSystemCall(ctx context.Context, require *require.Ass
 	}
 }
 
-func testBuildUserRequest(node *Node, id, hash, amt, asset string, action byte, extra []byte, references []crypto.Hash, fee *decimal.Decimal) *mtg.Action {
+func testBuildUserRequest(node *Node, mixAddress, id, hash, amt, asset string, action byte, extra []byte, references []crypto.Hash, fee *decimal.Decimal) *mtg.Action {
 	sequence += 10
 	if hash == "" {
 		hash = crypto.Sha256Hash([]byte(id)).String()
+	}
+	mix, err := bot.NewMixAddressFromString(mixAddress)
+	if err != nil {
+		panic(err)
 	}
 
 	memo := []byte{action}
@@ -835,7 +1000,8 @@ func testBuildUserRequest(node *Node, id, hash, amt, asset string, action byte, 
 			OutputId:           id,
 			TransactionHash:    hash,
 			AppId:              node.conf.AppId,
-			Senders:            []string{string(node.id)},
+			SendersThreshold:   int64(mix.Threshold),
+			Senders:            mix.Members(),
 			AssetId:            asset,
 			Extra:              memoStr,
 			Amount:             amount,

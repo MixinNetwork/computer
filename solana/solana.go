@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -31,6 +32,8 @@ const (
 	SolanaBlockDelay = 1
 	SolanaTxRetry    = 10
 )
+
+var errInvalidAddressLookup = errors.New("invalid address lookup")
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
 	for {
@@ -496,7 +499,7 @@ func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.Syst
 }
 
 func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, tx *solana.Transaction, meta *rpc.TransactionMeta) *solana.Transaction {
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(call.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
 	}
@@ -608,6 +611,19 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 }
 
 func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount) *solana.Transaction {
+	transfers := node.buildRefundWithdrawalTransfers(ctx, prepare, call)
+	if len(transfers) == 0 {
+		return nil
+	}
+
+	tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, call *store.SystemCall) []*solanaApp.TokenTransfer {
 	withdrawals := call.GetWithdrawalIds()
 	// the failure of prepare call means that only Solana assets are withdrawn
 	// the mint of external assets is failed so no need to burn
@@ -615,7 +631,7 @@ func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare
 		return nil
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, 0)
+	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(prepare.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
 	}
@@ -663,11 +679,7 @@ func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare
 	}
 
 	node.sortSolanaTransfers(transfers)
-	tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
-	if err != nil {
-		panic(err)
-	}
-	return tx
+	return transfers
 }
 
 type BalanceChange struct {
@@ -703,23 +715,23 @@ func (node *Node) processTransactionWithAddressLookups(ctx context.Context, txx 
 	}
 	for index, info := range infos.Value {
 		if info == nil {
-			return fmt.Errorf("get account info: not found")
+			return fmt.Errorf("%w: get account info: not found", errInvalidAddressLookup)
 		}
 		key := tblKeys[index]
 		tableContent, err := lookup.DecodeAddressLookupTableState(info.Data.GetBinary())
 		if err != nil {
-			return fmt.Errorf("decode address lookup table state: %s %w", key, err)
+			return fmt.Errorf("%w: decode address lookup table state: %s %v", errInvalidAddressLookup, key, err)
 		}
 
 		resolutions[key] = tableContent.Addresses
 	}
 
 	if err := txx.Message.SetAddressTables(resolutions); err != nil {
-		return fmt.Errorf("set address tables: %w", err)
+		return fmt.Errorf("%w: set address tables: %v", errInvalidAddressLookup, err)
 	}
 
 	if err := txx.Message.ResolveLookups(); err != nil {
-		return fmt.Errorf("resolve lookups: %w ", err)
+		return fmt.Errorf("%w: resolve lookups: %v", errInvalidAddressLookup, err)
 	}
 
 	return nil
@@ -881,7 +893,7 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 		switch programKey {
 		case system.ProgramID:
 			if _, ok := solanaApp.DecodeCreateAccount(accounts, ix.Data); ok {
-				continue
+				return fmt.Errorf("create account is not allowed in subsystem call")
 			}
 			if transfer, ok := solanaApp.DecodeSystemTransfer(accounts, ix.Data); ok {
 				recipient := transfer.GetRecipientAccount().PublicKey
@@ -923,6 +935,46 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 		default:
 			return fmt.Errorf("invalid program key: %s", programKey.String())
 		}
+	}
+	return nil
+}
+
+func (node *Node) VerifySubSystemCallEnvelope(tx *solana.Transaction, authority solana.PublicKey) error {
+	payer := node.SolanaPayer()
+	if len(tx.Message.AccountKeys) == 0 || tx.Message.AccountKeys[0] != payer {
+		return fmt.Errorf("invalid subsystem fee payer")
+	}
+	expectedSigners := solana.PublicKeySlice{payer}
+	if authority != payer {
+		expectedSigners = append(expectedSigners, authority)
+	}
+	if !slices.Equal(tx.Message.Signers(), expectedSigners) {
+		return fmt.Errorf("invalid subsystem signers: %v", tx.Message.Signers())
+	}
+	if len(tx.Message.Instructions) == 0 {
+		return fmt.Errorf("subsystem transaction has no nonce advance")
+	}
+	ix := tx.Message.Instructions[0]
+	program, err := tx.Message.Program(ix.ProgramIDIndex)
+	if err != nil {
+		return err
+	}
+	if program != system.ProgramID {
+		return fmt.Errorf("invalid nonce advance program: %s", program)
+	}
+	accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+	if err != nil {
+		return err
+	}
+	advance, err := solanaApp.DecodeNonceAdvance(accounts, ix.Data)
+	if err != nil {
+		return err
+	}
+	if advance.GetNonceAuthorityAccount().PublicKey != payer {
+		return fmt.Errorf("invalid nonce authority: %s", advance.GetNonceAuthorityAccount().PublicKey)
+	}
+	if advance.GetSysVarRecentBlockHashesPubkeyAccount().PublicKey != solana.SysVarRecentBlockHashesPubkey {
+		return fmt.Errorf("invalid nonce recent blockhashes sysvar")
 	}
 	return nil
 }

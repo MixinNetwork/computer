@@ -414,6 +414,9 @@ func DecodeNonceAdvance(accounts solana.AccountMetaSlice, data []byte) (*system.
 }
 
 func NonceAccountFromTx(tx *solana.Transaction) (*system.AdvanceNonceAccount, error) {
+	if len(tx.Message.Instructions) == 0 {
+		return nil, fmt.Errorf("transaction has no instructions")
+	}
 	ins := tx.Message.Instructions[0]
 	accounts, err := ins.ResolveInstructionAccounts(&tx.Message)
 	if err != nil {

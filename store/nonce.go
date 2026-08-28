@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ type NonceAccount struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+const MaxNonceAccountsPerMix = 5
+
+var ErrNonceAccountLimit = errors.New("nonce account limit reached")
 
 var nonceAccountCols = []string{"address", "hash", "mix", "call_id", "updated_by", "created_at", "updated_at"}
 
@@ -101,6 +106,15 @@ func (s *SQLite3Store) LockNonceAccountWithMix(ctx context.Context, address, mix
 		return err
 	}
 	defer common.Rollback(tx)
+
+	var count int
+	err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM nonce_accounts WHERE mix=?", mix).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("SELECT nonce_accounts %v", err)
+	}
+	if count >= MaxNonceAccountsPerMix {
+		return fmt.Errorf("%w: %s", ErrNonceAccountLimit, mix)
+	}
 
 	err = s.execOne(ctx, tx, "UPDATE nonce_accounts SET mix=?, updated_at=? WHERE address=? AND mix IS NULL AND call_id IS NULL",
 		mix, time.Now().UTC(), address)
