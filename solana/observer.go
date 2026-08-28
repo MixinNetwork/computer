@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -620,6 +621,37 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 		}
 
+		if failureReason == "" {
+			err = node.OccupyNonceAccountByCall(ctx, nonce, call.RequestId)
+			if err != nil {
+				return err
+			}
+			fee, err := node.getSystemCallFeeFromXIN(ctx, call)
+			if err != nil {
+				return err
+			}
+			cid := common.UniqueId(id, "storage")
+			prepareNonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+			prepareTx, err := node.CreatePrepareTransaction(ctx, call, prepareNonce, fee)
+			if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
+				failureReason = err.Error()
+			} else if err != nil {
+				return err
+			}
+
+			if prepareTx != nil {
+				err := node.OccupyNonceAccountByCall(ctx, prepareNonce, cid)
+				if err != nil {
+					return err
+				}
+				tb, err := prepareTx.MarshalBinary()
+				if err != nil {
+					panic(err)
+				}
+				extra = attachSystemCall(extra, cid, tb)
+			}
+		}
+
 		if failureReason != "" {
 			logger.Printf("observer.expireSystemCall(%v %v %s)", call, nonce, failureReason)
 			id = common.UniqueId(id, "expire-nonce")
@@ -627,33 +659,6 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			err = node.store.WriteFailedCallIfNotExist(ctx, call, failureReason)
 			if err != nil {
 				return err
-			}
-		} else {
-			err := node.OccupyNonceAccountByCall(ctx, nonce, call.RequestId)
-			if err != nil {
-				return err
-			}
-
-			cid := common.UniqueId(id, "storage")
-			fee, err := node.getSystemCallFeeFromXIN(ctx, call)
-			if err != nil {
-				return err
-			}
-			nonce = node.ReadSpareNonceAccountWithCall(ctx, cid)
-			tx, err := node.CreatePrepareTransaction(ctx, call, nonce, fee)
-			if err != nil {
-				return err
-			}
-			if tx != nil {
-				err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
-				if err != nil {
-					return err
-				}
-				tb, err := tx.MarshalBinary()
-				if err != nil {
-					panic(err)
-				}
-				extra = attachSystemCall(extra, cid, tb)
 			}
 		}
 
@@ -728,6 +733,18 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 	var ids []string
 	for _, c := range calls {
 		ids = append(ids, c.RequestId)
+		tx, err := solana.TransactionFromBase64(c.Raw)
+		if err != nil {
+			panic(fmt.Errorf("solana.TransactionFromBase64(%s) => %v", c.RequestId, err))
+		}
+		err = solanaApp.ValidateTransactionSize(tx)
+		if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
+			logger.Printf("node.handleSignedCallSequence(%s) => skip oversized call %s: %v", key, c.RequestId, err)
+			return
+		}
+		if err != nil {
+			panic(fmt.Errorf("solana.ValidateTransactionSize(%s) => %v", c.RequestId, err))
+		}
 	}
 	logger.Printf("node.handleSignedCallSequence(%s) => %s", key, strings.Join(ids, ","))
 	if len(calls) > 2 {

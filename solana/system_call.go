@@ -463,12 +463,18 @@ func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Requ
 	return node.buildSystemCallFromBytes(ctx, req, id, raw, true)
 }
 
-// should only return error when fail to resolve address lookups or parse nonce advance instruction;
-// without fields of superior, type, public, skip_postprocess
+// Returns validation errors for oversized transactions, unresolved address
+// lookups, or malformed nonce-advance instructions. The returned call omits
+// superior, type, public, and skip_postprocess fields.
 func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Request, id string, raw []byte, withdrawn bool) (*store.SystemCall, *solana.Transaction, error) {
 	tx, err := solana.TransactionFromBytes(raw)
 	logger.Printf("solana.TransactionFromBytes(%x) => %v %v", raw, tx, err)
 	if err != nil {
+		return nil, nil, err
+	}
+	err = solanaApp.ValidateTransactionSize(tx)
+	if err != nil {
+		logger.Printf("solana.ValidateTransactionSize(%s %s) => %v", req.Id, id, err)
 		return nil, nil, err
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)

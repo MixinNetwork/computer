@@ -3,6 +3,8 @@ package solana
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -20,10 +22,32 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 )
 
+var ErrTransactionTooLarge = errors.New("solana transaction too large")
+
+type transactionTooLargeError struct {
+	encodedSize int
+}
+
+func (e *transactionTooLargeError) Error() string {
+	return fmt.Sprintf(
+		"base64 encoded solana_transaction::versioned::VersionedTransaction too large: %d bytes (max: encoded/raw %d/%d)",
+		e.encodedSize,
+		MaxTransactionEncodedSize,
+		MaxTransactionRawSize,
+	)
+}
+
+func (e *transactionTooLargeError) Unwrap() error {
+	return ErrTransactionTooLarge
+}
+
 const (
 	NonceAccountSize  uint64 = 80
 	MintSize          uint64 = 82
 	NormalAccountSize uint64 = 165
+
+	MaxTransactionRawSize     = 1232
+	MaxTransactionEncodedSize = 1644
 
 	maxNameLength   = 32
 	maxSymbolLength = 10
@@ -35,6 +59,28 @@ const (
 	SolanaDecimal = 9
 	AssetDecimal  = 8
 )
+
+// ValidateTransactionSize checks the wire size of a fully signed transaction.
+// Transactions created for system calls are commonly marshaled before their
+// signatures are produced, so counting tx.Signatures directly can undercount
+// the final wire size by 64 bytes per missing signature.
+func ValidateTransactionSize(tx *solana.Transaction) error {
+	if tx == nil {
+		return fmt.Errorf("nil solana transaction")
+	}
+
+	fullySigned := *tx
+	fullySigned.Signatures = make([]solana.Signature, int(tx.Message.Header.NumRequiredSignatures))
+	raw, err := fullySigned.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("marshal solana transaction: %w", err)
+	}
+	if len(raw) <= MaxTransactionRawSize {
+		return nil
+	}
+
+	return &transactionTooLargeError{encodedSize: base64.StdEncoding.EncodedLen(len(raw))}
+}
 
 type Metadata struct {
 	Name        string `json:"name"`
