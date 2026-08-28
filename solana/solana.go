@@ -278,13 +278,6 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			if transfer.Value.Uint64() < rentExemptBalance {
 				continue
 			}
-			index, err := tx.GetAccountIndex(solana.MustPublicKeyFromBase58(transfer.Receiver))
-			if err != nil {
-				panic(err)
-			}
-			if meta.PreBalances[index] <= rentExemptBalance {
-				continue
-			}
 		}
 		tsMap[transfer.Receiver] = append(tsMap[transfer.Receiver], &solanaApp.TokenTransfer{
 			SolanaAsset: isSolAsset,
