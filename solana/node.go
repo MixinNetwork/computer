@@ -190,8 +190,8 @@ func (node *Node) writeBlockCheckpoint(ctx context.Context, checkpoint int64) er
 
 func (node *Node) readSolanaBlockCheckpoint(ctx context.Context) (int64, error) {
 	height, err := node.readRequestNumber(ctx, store.SolanaScanHeightKey)
-	if err != nil || height == 0 {
-		return 347756918, err
+	if err != nil || height < SolanaMinimumHeight {
+		return SolanaMinimumHeight, err
 	}
 	return height, nil
 }

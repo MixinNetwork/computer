@@ -29,8 +29,9 @@ import (
 )
 
 const (
-	SolanaBlockDelay = 1
-	SolanaTxRetry    = 10
+	SolanaBlockDelay    = 1
+	SolanaTxRetry       = 10
+	SolanaMinimumHeight = 442271000
 )
 
 var errInvalidAddressLookup = errors.New("invalid address lookup")
