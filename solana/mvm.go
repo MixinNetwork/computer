@@ -345,7 +345,9 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 			prepare.Public = hex.EncodeToString(user.FingerprintWithEmptyPath())
 			prepare.State = common.RequestStatePending
 
-			err = node.VerifySubSystemCallEnvelope(tx, node.getMTGAddress(ctx))
+			// A fee-only prepare transfers SOL from the payer, so it does not
+			// necessarily require the MTG authority to sign.
+			err = node.VerifySubSystemCallEnvelope(tx, node.getMTGAddress(ctx), false)
 			logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", prepare.RequestId, err)
 			if err != nil {
 				return node.failRequest(ctx, req, "")
@@ -784,7 +786,7 @@ func (node *Node) processObserverCreateDepositCall(ctx context.Context, req *sto
 		logger.Printf("node.getSubSystemCallFromExtra(%v) => %v %v", req, call, err)
 		return node.failRequest(ctx, req, "")
 	}
-	err = node.VerifySubSystemCallEnvelope(tx, userAddress)
+	err = node.VerifySubSystemCallEnvelope(tx, userAddress, true)
 	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", call.RequestId, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")

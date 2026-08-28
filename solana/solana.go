@@ -932,14 +932,20 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 	return nil
 }
 
-func (node *Node) VerifySubSystemCallEnvelope(tx *solana.Transaction, authority solana.PublicKey) error {
+// VerifySubSystemCallEnvelope restricts signers to the payer and the expected
+// authority. Some payer-funded prepare calls do not use the authority at all.
+func (node *Node) VerifySubSystemCallEnvelope(tx *solana.Transaction, authority solana.PublicKey, authorityRequired bool) error {
 	payer := node.SolanaPayer()
 	if len(tx.Message.AccountKeys) == 0 || tx.Message.AccountKeys[0] != payer {
 		return fmt.Errorf("invalid subsystem fee payer")
 	}
 	expectedSigners := solana.PublicKeySlice{payer}
 	if authority != payer {
-		expectedSigners = append(expectedSigners, authority)
+		if tx.IsSigner(authority) {
+			expectedSigners = append(expectedSigners, authority)
+		} else if authorityRequired {
+			return fmt.Errorf("missing subsystem authority signer: %s", authority)
+		}
 	}
 	if !slices.Equal(tx.Message.Signers(), expectedSigners) {
 		return fmt.Errorf("invalid subsystem signers: %v", tx.Message.Signers())

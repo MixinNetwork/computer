@@ -342,7 +342,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	if call.Type == store.CallTypePrepare {
 		authority = node.getMTGAddress(ctx)
 	}
-	err = node.VerifySubSystemCallEnvelope(tx, authority)
+	err = node.VerifySubSystemCallEnvelope(tx, authority, true)
 	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", post.RequestId, err)
 	if err != nil {
 		return nil, err
