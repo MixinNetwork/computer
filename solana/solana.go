@@ -315,13 +315,13 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	}
 
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
 	if err != nil {
 		return err
 	}
-	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
+	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	data, err := tx.MarshalBinary()
 	if err != nil {
