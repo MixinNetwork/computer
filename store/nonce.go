@@ -190,6 +190,28 @@ func (s *SQLite3Store) ListLockedNonceAccounts(ctx context.Context) ([]*NonceAcc
 	return as, nil
 }
 
+func (s *SQLite3Store) ListNonceAccountsByMix(ctx context.Context, mix string) ([]*NonceAccount, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	query := fmt.Sprintf("SELECT %s FROM nonce_accounts WHERE mix=? ORDER BY updated_at ASC", strings.Join(nonceAccountCols, ","))
+	rows, err := s.db.QueryContext(ctx, query, mix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var as []*NonceAccount
+	for rows.Next() {
+		nonce, err := nonceAccountFromRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		as = append(as, nonce)
+	}
+	return as, rows.Err()
+}
+
 func (s *SQLite3Store) ListNonceAccounts(ctx context.Context) ([]*NonceAccount, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()

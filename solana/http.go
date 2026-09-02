@@ -36,6 +36,7 @@ func (node *Node) StartHTTP(version string) {
 	router.GET("/deployed_assets", node.httpGetAssets)
 	router.GET("/address_lookup_tables", node.httpGetAddressLookupTables)
 	router.GET("/system_calls/:id", node.httpGetSystemCall)
+	router.GET("/nonce_accounts", node.httpListMixNonces)
 	router.POST("/deployed_assets", node.httpDeployAssets)
 	router.POST("/nonce_accounts", node.httpLockNonce)
 	router.POST("/fee", node.httpGetFeeOnXIN)
@@ -284,6 +285,29 @@ func (node *Node) httpLockNonce(w http.ResponseWriter, r *http.Request, params m
 		"nonce_address": nonce.Address,
 		"nonce_hash":    nonce.Hash,
 	})
+}
+
+func (node *Node) httpListMixNonces(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	mix := r.URL.Query().Get("mix")
+	if mix == "" {
+		common.RenderJSON(w, r, http.StatusBadRequest, map[string]any{"error": "mix"})
+		return
+	}
+
+	nonces, err := node.store.ListNonceAccountsByMix(r.Context(), mix)
+	if err != nil {
+		common.RenderError(w, r, err)
+		return
+	}
+
+	view := make([]map[string]any, 0, len(nonces))
+	for _, nonce := range nonces {
+		view = append(view, map[string]any{
+			"address": nonce.Address,
+			"call_id": nonce.CallId.String,
+		})
+	}
+	common.RenderJSON(w, r, http.StatusOK, view)
 }
 
 func (node *Node) httpGetFeeOnXIN(w http.ResponseWriter, r *http.Request, params map[string]string) {
