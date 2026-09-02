@@ -36,7 +36,7 @@ func (node *Node) StartHTTP(version string) {
 	router.GET("/deployed_assets", node.httpGetAssets)
 	router.GET("/address_lookup_tables", node.httpGetAddressLookupTables)
 	router.GET("/system_calls/:id", node.httpGetSystemCall)
-	router.GET("/nonce_accounts", node.httpListMixNonces)
+	router.GET("/nonce_accounts/:mix", node.httpListMixNonces)
 	router.POST("/deployed_assets", node.httpDeployAssets)
 	router.POST("/nonce_accounts", node.httpLockNonce)
 	router.POST("/fee", node.httpGetFeeOnXIN)
@@ -288,7 +288,7 @@ func (node *Node) httpLockNonce(w http.ResponseWriter, r *http.Request, params m
 }
 
 func (node *Node) httpListMixNonces(w http.ResponseWriter, r *http.Request, params map[string]string) {
-	mix := r.URL.Query().Get("mix")
+	mix := params["mix"]
 	if mix == "" {
 		common.RenderJSON(w, r, http.StatusBadRequest, map[string]any{"error": "mix"})
 		return
