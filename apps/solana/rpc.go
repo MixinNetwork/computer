@@ -223,13 +223,13 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 
 func (c *Client) RPCGetMinimumBalanceForRentExemption(ctx context.Context, dataSize uint64) (uint64, error) {
 	for {
-		r, err := c.rpcClient.GetMinimumBalanceForRentExemption(ctx, dataSize, rpc.CommitmentProcessed)
+		r, err := c.rpcClient.GetMinimumBalanceForRentExemption(ctx, dataSize, rpc.CommitmentConfirmed)
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
 			continue
 		}
 		if err != nil {
-			return 0, fmt.Errorf("solana.RPCGetMultipleAccounts() => %v", err)
+			return 0, fmt.Errorf("solana.GetMinimumBalanceForRentExemption(%d) => %w", dataSize, err)
 		}
 		return r, nil
 	}

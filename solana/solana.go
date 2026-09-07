@@ -32,9 +32,20 @@ const (
 	SolanaBlockDelay    = 1
 	SolanaTxRetry       = 10
 	SolanaMinimumHeight = 442271000
+
+	// SOL cleanup uses the historical 165-byte rent minimum as a fixed protocol
+	// dust threshold, not as a quote for current Solana rent. Observers and
+	// validators must make the same selection during replay and rent changes.
+	// Changing this value requires a coordinated protocol upgrade.
+	solanaCleanupDustLamports uint64 = 2_039_280
 )
 
 var errInvalidAddressLookup = errors.New("invalid address lookup")
+
+func isSOLCleanupDust(assetID string, lamports decimal.Decimal) bool {
+	return assetID == solanaApp.SolanaChainBase &&
+		lamports.Cmp(decimal.NewFromUint64(solanaCleanupDustLamports)) <= 0
+}
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
 	for {
@@ -390,7 +401,8 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 		})
 	}
 
-	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)
+	// Account funding must use current rent rather than the node's cached quote.
+	rent, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)
 	if err != nil {
 		panic(err)
 	}
@@ -412,7 +424,8 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 		return "", "", err
 	}
 	if acc == nil {
-		rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NonceAccountSize)
+		// Account funding must use current rent rather than the node's cached quote.
+		rent, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NonceAccountSize)
 		if err != nil {
 			panic(err)
 		}
@@ -548,10 +561,6 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		}
 	}
 
-	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
-	if err != nil {
-		panic(err)
-	}
 	var transfers []*solanaApp.TokenTransfer
 	for _, asset := range assets {
 		dust := decimal.RequireFromString("0.00000001")
@@ -563,12 +572,9 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		if !amount.BigInt().IsUint64() {
 			continue
 		}
-		if asset.AssetId == solanaApp.SolanaChainBase {
-			limit := decimal.NewFromUint64(rent)
-			if amount.Cmp(limit) < 1 {
-				logger.Printf("skip SOL transfer in post-process: %v", asset)
-				continue
-			}
+		if isSOLCleanupDust(asset.AssetId, amount) {
+			logger.Printf("skip SOL transfer in post-process: %v", asset)
+			continue
 		}
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
@@ -642,21 +648,15 @@ func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, c
 		assets[a.Address] = a
 	}
 
-	rent, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
-	if err != nil {
-		panic(err)
-	}
 	var transfers []*solanaApp.TokenTransfer
 	for _, asset := range assets {
 		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
 		if !amount.BigInt().IsUint64() {
 			continue
 		}
-		if asset.AssetId == solanaApp.SolanaChainBase {
-			if amount.Cmp(decimal.NewFromUint64(rent)) < 1 {
-				logger.Printf("skip SOL transfer in refund-withdrawal: %v", asset)
-				continue
-			}
+		if isSOLCleanupDust(asset.AssetId, amount) {
+			logger.Printf("skip SOL transfer in refund-withdrawal: %v", asset)
+			continue
 		}
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
