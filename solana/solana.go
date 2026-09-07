@@ -777,7 +777,9 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		}
 	}
 	for address, c := range postMap {
-		if changes[address] != nil {
+		// Unchanged balances have no changes entry, but were already handled above.
+		// Only balances absent from preMap should count in full as new income.
+		if preMap[address] != nil {
 			continue
 		}
 		changes[address] = c
@@ -855,7 +857,13 @@ func buildBalanceMap(balances []rpc.TokenBalance, owner *solana.PublicKey) map[s
 		if owner == nil {
 			key = fmt.Sprintf("%s:%s", tb.Owner.String(), tb.Mint.String())
 		}
-		amount := decimal.RequireFromString(tb.UiTokenAmount.UiAmountString)
+		// Use raw units for settlement; UI amounts may include Token-2022 scaling or interest.
+		amount := decimal.RequireFromString(tb.UiTokenAmount.Amount).Shift(-int32(tb.UiTokenAmount.Decimals))
+		// One owner can hold the same mint in multiple token accounts, so sum their balances.
+		if old := bm[key]; old != nil {
+			old.Amount = old.Amount.Add(amount)
+			continue
+		}
 		bm[key] = &BalanceChange{
 			Owner:    *tb.Owner,
 			Amount:   amount,
