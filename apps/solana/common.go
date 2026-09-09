@@ -121,6 +121,15 @@ func ValidateTransaction(tx *solana.Transaction) error {
 	if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
 		return fmt.Errorf("%w: loaded accounts data size limit must be set", ErrInvalidV1Config)
 	}
+	if *config.ComputeUnitLimit > maxComputeUnitLimit {
+		return fmt.Errorf("%w: compute unit limit exceeds %d", ErrInvalidV1Config, maxComputeUnitLimit)
+	}
+	if *config.LoadedAccountsDataSizeLimit > maxLoadedAccountsDataSizeLimit {
+		return fmt.Errorf("%w: loaded accounts data size limit exceeds %d", ErrInvalidV1Config, maxLoadedAccountsDataSizeLimit)
+	}
+	if config.PriorityFee != nil && *config.PriorityFee > maxPriorityFeeLamports {
+		return fmt.Errorf("%w: priority fee exceeds %d lamports", ErrInvalidV1Config, maxPriorityFeeLamports)
+	}
 	return nil
 }
 

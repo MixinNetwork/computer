@@ -28,11 +28,21 @@ const (
 	// V1 defaults this limit to zero when omitted, so sets it explicitly.
 	maxLoadedAccountsDataSizeLimit = uint32(64 * 1024 * 1024)
 	microLamportsPerLamport        = int64(1_000_000)
+	defaultMicroLamportsPerCU      = uint64(1_000)
+
+	// Computer fee-payer policy. This is a service limit, not an Agave
+	// protocol constant. It caps one transaction's total priority fee at
+	// 0.001 SOL.
+	maxPriorityFeeLamports = uint64(1_000_000)
 
 	// Solana's compute optimization guide uses a 10% margin over simulated CU:
 	// https://solana.com/developers/cookbook/transactions/optimize-compute
 	computeUnitMarginNumerator   = uint64(110)
 	computeUnitMarginDenominator = uint64(100)
+	// Loaded account data can change between simulation and execution. Apply
+	// the same 10% operational margin, capped by Agave's 64 MiB limit.
+	loadedAccountsDataSizeMarginNumerator   = uint64(110)
+	loadedAccountsDataSizeMarginDenominator = uint64(100)
 )
 
 func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent uint64) (*solana.Transaction, error) {
@@ -495,20 +505,31 @@ func (c *Client) getV1TransactionConfig(ctx context.Context, tx *solana.Transact
 	if *simulation.Value.UnitsConsumed == 0 {
 		return solana.TransactionConfig{}, fmt.Errorf("solana.SimulateTransaction() => units consumed is zero")
 	}
+	if simulation.Value.LoadedAccountsDataSize == nil {
+		return solana.TransactionConfig{}, fmt.Errorf("solana.SimulateTransaction() => loaded accounts data size is missing")
+	}
+	if *simulation.Value.LoadedAccountsDataSize == 0 {
+		return solana.TransactionConfig{}, fmt.Errorf("solana.SimulateTransaction() => loaded accounts data size is zero")
+	}
 	computeUnitLimit := getComputeUnitLimit(*simulation.Value.UnitsConsumed)
+	loadedAccountsDataSizeLimit := getLoadedAccountsDataSizeLimit(*simulation.Value.LoadedAccountsDataSize)
 	microLamportsPerCU := uint64(0)
 	if !common.CheckTestEnvironment(ctx) {
-		recentFees, err := c.rpcClient.GetRecentPrioritizationFees(ctx, []solana.PublicKey{})
+		writableAccounts, err := tx.Message.Writable()
+		if err != nil {
+			return solana.TransactionConfig{}, fmt.Errorf("solana.Message.Writable() => %w", err)
+		}
+		recentFees, err := c.RPCGetRecentPrioritizationFees(ctx, writableAccounts)
 		if err != nil {
 			return solana.TransactionConfig{}, fmt.Errorf("solana.GetRecentPrioritizationFees() => %w", err)
 		}
-		microLamportsPerCU = getAveragePriorityFee(recentFees)
+		microLamportsPerCU = getMedianPriorityFee(recentFees)
 	}
 	priorityFee := getTotalPriorityFee(microLamportsPerCU, computeUnitLimit)
 
 	return solana.TransactionConfig{}.
 		WithComputeUnitLimit(computeUnitLimit).
-		WithLoadedAccountsDataSizeLimit(maxLoadedAccountsDataSizeLimit).
+		WithLoadedAccountsDataSizeLimit(loadedAccountsDataSizeLimit).
 		WithPriorityFee(priorityFee), nil
 }
 
@@ -536,11 +557,14 @@ func (c *Client) configureV1TransactionBuilder(ctx context.Context, builder *sol
 }
 
 func getTotalPriorityFee(microLamportsPerCU uint64, computeUnitLimit uint32) uint64 {
-	return decimal.NewFromUint64(microLamportsPerCU).
+	fee := decimal.NewFromUint64(microLamportsPerCU).
 		Mul(decimal.NewFromUint64(uint64(computeUnitLimit))).
 		Div(decimal.NewFromInt(microLamportsPerLamport)).
-		RoundCeil(0).
-		BigInt().Uint64()
+		RoundCeil(0)
+	if fee.GreaterThan(decimal.NewFromUint64(maxPriorityFeeLamports)) {
+		return maxPriorityFeeLamports
+	}
+	return fee.BigInt().Uint64()
 }
 
 func getComputeUnitLimit(unitsConsumed uint64) uint32 {
@@ -558,15 +582,36 @@ func getComputeUnitLimit(unitsConsumed uint64) uint32 {
 	return uint32(units)
 }
 
-func getAveragePriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
+func getLoadedAccountsDataSizeLimit(loadedAccountsDataSize uint32) uint32 {
+	if loadedAccountsDataSize == 0 {
+		return 0
+	}
+	if loadedAccountsDataSize >= maxLoadedAccountsDataSizeLimit {
+		return maxLoadedAccountsDataSizeLimit
+	}
+	size := (uint64(loadedAccountsDataSize)*loadedAccountsDataSizeMarginNumerator + loadedAccountsDataSizeMarginDenominator - 1) /
+		loadedAccountsDataSizeMarginDenominator
+	if size > uint64(maxLoadedAccountsDataSizeLimit) {
+		return maxLoadedAccountsDataSizeLimit
+	}
+	return uint32(size)
+}
+
+func getMedianPriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
 	if len(recentFees) == 0 {
-		return 1000
+		return defaultMicroLamportsPerCU
 	}
-	total := decimal.NewFromInt(0)
-	for _, fee := range recentFees {
-		total = total.Add(decimal.NewFromUint64(fee.PrioritizationFee))
+	fees := make([]uint64, len(recentFees))
+	for i, fee := range recentFees {
+		fees[i] = fee.PrioritizationFee
 	}
-	return total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
+	slices.Sort(fees)
+	middle := len(fees) / 2
+	if len(fees)%2 == 1 {
+		return fees[middle]
+	}
+	lower, upper := fees[middle-1], fees[middle]
+	return lower + (upper-lower)/2
 }
 
 func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, exception *solana.PublicKey) ([]*Transfer, error) {

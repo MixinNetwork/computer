@@ -28,6 +28,8 @@ type Client struct {
 	rpcEndpoint string
 }
 
+const recentPrioritizationFeeMaxAttempts = 3
+
 type AssetMetadata struct {
 	Symbol      string `json:"symbol"`
 	Name        string `json:"name"`
@@ -57,6 +59,24 @@ func (c *Client) RPCGetConfirmedHeight(ctx context.Context) (uint64, error) {
 		}
 		return block.Context.Slot, nil
 	}
+}
+
+func (c *Client) RPCGetRecentPrioritizationFees(ctx context.Context, accounts solana.PublicKeySlice) ([]rpc.PriorizationFeeResult, error) {
+	for attempt := 1; attempt <= recentPrioritizationFeeMaxAttempts; attempt++ {
+		fees, err := c.rpcClient.GetRecentPrioritizationFees(ctx, accounts)
+		if err == nil {
+			return fees, nil
+		}
+		if attempt == recentPrioritizationFeeMaxAttempts || !mtg.CheckRetryableError(err) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	panic("unreachable")
 }
 
 func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.GetBlockResult, error) {
