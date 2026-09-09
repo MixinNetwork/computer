@@ -272,6 +272,32 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 }
 
 func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {
+	builder, err := c.NewTransferOrMintTokensBuilder(ctx, payer, mtg, nonce, transfers, memoStr)
+	if err != nil {
+		return nil, err
+	}
+	err = c.configureV1TransactionBuilder(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := builder.Build()
+	if err != nil {
+		panic(err)
+	}
+	err = ValidateTransaction(tx)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// NewTransferOrMintTokensBuilder builds the durable-nonce and asset
+// instructions without selecting a transaction version or estimating its v1
+// resource configuration. Cleanup verification uses this to rebuild the
+// signed business instructions without consulting current RPC state for a
+// simulation or priority-fee quote.
+func (c *Client) NewTransferOrMintTokensBuilder(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.TransactionBuilder, error) {
 	builder := c.buildInitialTxWithNonceAccount(payer, nonce)
 
 	for _, transfer := range transfers {
@@ -314,7 +340,15 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 			).Build(),
 		)
 	}
-	err := c.configureV1TransactionBuilder(ctx, builder)
+	return builder, nil
+}
+
+func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+	builder, err := c.NewTransferOrBurnTokensBuilder(ctx, payer, user, nonce, transfers)
+	if err != nil {
+		return nil, err
+	}
+	err = c.configureV1TransactionBuilder(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +363,10 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 	return tx, nil
 }
 
-func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+// NewTransferOrBurnTokensBuilder is the burn-side counterpart to
+// NewTransferOrMintTokensBuilder. It only builds the deterministic transaction
+// instructions; callers decide how the final transaction is configured.
+func (c *Client) NewTransferOrBurnTokensBuilder(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.TransactionBuilder, error) {
 	builder := c.buildInitialTxWithNonceAccount(payer, nonce)
 
 	for _, transfer := range transfers {
@@ -354,19 +391,7 @@ func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.Pu
 			).Build(),
 		)
 	}
-	err := c.configureV1TransactionBuilder(ctx, builder)
-	if err != nil {
-		return nil, err
-	}
-
-	tx, err := builder.Build()
-	if err != nil {
-		return nil, err
-	}
-	if err := ValidateTransaction(tx); err != nil {
-		return nil, err
-	}
-	return tx, nil
+	return builder, nil
 }
 
 func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder *solana.TransactionBuilder, transfer *TokenTransfer, payer, source solana.PublicKey) (*solana.TransactionBuilder, error) {

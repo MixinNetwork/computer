@@ -97,11 +97,16 @@ func ValidateTransactionSize(tx *solana.Transaction) error {
 	}
 }
 
-// ValidateTransaction checks the wire size and the resource limits required by
-// the v1 format. Unlike legacy and v0 transactions, v1 defaults both limits to
-// zero when they are omitted.
+// ValidateTransaction checks the message structure, wire size, and resource
+// limits required by the v1 format. It deliberately does not require the
+// transaction's signatures because system-call transactions are validated
+// before all parties have signed them.
 func ValidateTransaction(tx *solana.Transaction) error {
-	err := ValidateTransactionSize(tx)
+	err := tx.Message.Sanitize()
+	if err != nil {
+		return fmt.Errorf("sanitize solana transaction message: %w", err)
+	}
+	err = ValidateTransactionSize(tx)
 	if err != nil {
 		return err
 	}
@@ -117,6 +122,21 @@ func ValidateTransaction(tx *solana.Transaction) error {
 		return fmt.Errorf("%w: loaded accounts data size limit must be set", ErrInvalidV1Config)
 	}
 	return nil
+}
+
+// ValidateWireTransaction additionally checks that a decoded or sendable
+// transaction has exactly the signature slots declared by its message header.
+// Zero-valued placeholder signatures remain valid for transactions awaiting
+// multi-party signing.
+func ValidateWireTransaction(tx *solana.Transaction) error {
+	if tx == nil {
+		return fmt.Errorf("nil solana transaction")
+	}
+	err := tx.Sanitize()
+	if err != nil {
+		return fmt.Errorf("sanitize solana wire transaction: %w", err)
+	}
+	return ValidateTransaction(tx)
 }
 
 type Metadata struct {

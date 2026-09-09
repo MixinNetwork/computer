@@ -737,13 +737,13 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 		if err != nil {
 			panic(fmt.Errorf("solana.TransactionFromBase64(%s) => %v", c.RequestId, err))
 		}
-		err = solanaApp.ValidateTransaction(tx)
+		err = solanaApp.ValidateWireTransaction(tx)
 		if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
 			logger.Printf("node.handleSignedCallSequence(%s) => skip oversized call %s: %v", key, c.RequestId, err)
 			return
 		}
 		if err != nil {
-			panic(fmt.Errorf("solana.ValidateTransaction(%s) => %v", c.RequestId, err))
+			panic(fmt.Errorf("solana.ValidateWireTransaction(%s) => %v", c.RequestId, err))
 		}
 	}
 	logger.Printf("node.handleSignedCallSequence(%s) => %s", key, strings.Join(ids, ","))

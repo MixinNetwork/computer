@@ -295,7 +295,7 @@ func (c *Client) GetMint(ctx context.Context, mint solana.PublicKey) (*token.Min
 }
 
 func (c *Client) SendTransaction(ctx context.Context, tx *solana.Transaction) (string, error) {
-	if err := ValidateTransaction(tx); err != nil {
+	if err := ValidateWireTransaction(tx); err != nil {
 		return "", err
 	}
 	sig, err := c.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{

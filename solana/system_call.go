@@ -385,9 +385,9 @@ func (node *Node) verifyFailedPostProcessCall(ctx context.Context, call, main, p
 	var expected *solana.Transaction
 	switch call.Type {
 	case store.CallTypeMain:
-		expected = node.CreatePostProcessTransaction(ctx, main, nonce, nil, nil)
+		expected = node.createPostProcessTransaction(ctx, main, nonce, nil, nil, actual)
 	case store.CallTypePrepare:
-		expected = node.CreateRefundWithdrawalTransaction(ctx, call, main, nonce)
+		expected = node.createRefundWithdrawalTransaction(ctx, call, main, nonce, actual)
 	default:
 		return fmt.Errorf("invalid failed post-process superior type: %s", call.Type)
 	}
@@ -533,9 +533,9 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 	if err != nil {
 		return nil, nil, err
 	}
-	err = solanaApp.ValidateTransaction(tx)
+	err = solanaApp.ValidateWireTransaction(tx)
 	if err != nil {
-		logger.Printf("solana.ValidateTransaction(%s %s) => %v", req.Id, id, err)
+		logger.Printf("solana.ValidateWireTransaction(%s %s) => %v", req.Id, id, err)
 		return nil, nil, err
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
