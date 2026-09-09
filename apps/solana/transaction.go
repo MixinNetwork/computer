@@ -66,7 +66,7 @@ func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -105,7 +105,7 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*sola
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -195,7 +195,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 			panic(err)
 		}
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -241,7 +241,7 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, "", err
 	}
 	return tx, table, nil
@@ -295,7 +295,7 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -331,7 +331,7 @@ func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.Pu
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil

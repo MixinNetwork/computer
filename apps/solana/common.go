@@ -22,18 +22,23 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 )
 
-var ErrTransactionTooLarge = errors.New("solana transaction too large")
+var (
+	ErrTransactionTooLarge = errors.New("solana transaction too large")
+	ErrInvalidV1Config     = errors.New("invalid solana v1 transaction config")
+)
 
 type transactionTooLargeError struct {
 	encodedSize int
+	encodedMax  int
+	rawMax      int
 }
 
 func (e *transactionTooLargeError) Error() string {
 	return fmt.Sprintf(
 		"base64 encoded solana_transaction::versioned::VersionedTransaction too large: %d bytes (max: encoded/raw %d/%d)",
 		e.encodedSize,
-		MaxTransactionEncodedSize,
-		MaxTransactionRawSize,
+		e.encodedMax,
+		e.rawMax,
 	)
 }
 
@@ -46,8 +51,10 @@ const (
 	MintSize          uint64 = 82
 	NormalAccountSize uint64 = 165
 
-	MaxTransactionRawSize     = 1232
-	MaxTransactionEncodedSize = 1644
+	MaxTransactionRawSize       = 1232
+	MaxTransactionEncodedSize   = 1644
+	MaxTransactionRawSizeV1     = solana.MaxTransactionSizeV1
+	MaxTransactionEncodedSizeV1 = (MaxTransactionRawSizeV1 + 2) / 3 * 4
 
 	maxNameLength   = 32
 	maxSymbolLength = 10
@@ -75,11 +82,41 @@ func ValidateTransactionSize(tx *solana.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("marshal solana transaction: %w", err)
 	}
-	if len(raw) <= MaxTransactionRawSize {
+	rawMax := MaxTransactionRawSize
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		rawMax = MaxTransactionRawSizeV1
+	}
+	if len(raw) <= rawMax {
 		return nil
 	}
 
-	return &transactionTooLargeError{encodedSize: base64.StdEncoding.EncodedLen(len(raw))}
+	return &transactionTooLargeError{
+		encodedSize: base64.StdEncoding.EncodedLen(len(raw)),
+		encodedMax:  base64.StdEncoding.EncodedLen(rawMax),
+		rawMax:      rawMax,
+	}
+}
+
+// ValidateTransaction checks the wire size and the resource limits required by
+// the v1 format. Unlike legacy and v0 transactions, v1 defaults both limits to
+// zero when they are omitted.
+func ValidateTransaction(tx *solana.Transaction) error {
+	err := ValidateTransactionSize(tx)
+	if err != nil {
+		return err
+	}
+	if tx.Message.GetVersion() != solana.MessageVersionV1 {
+		return nil
+	}
+
+	config := tx.Message.TransactionConfig
+	if config.ComputeUnitLimit == nil || *config.ComputeUnitLimit == 0 {
+		return fmt.Errorf("%w: compute unit limit must be set", ErrInvalidV1Config)
+	}
+	if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
+		return fmt.Errorf("%w: loaded accounts data size limit must be set", ErrInvalidV1Config)
+	}
+	return nil
 }
 
 type Metadata struct {

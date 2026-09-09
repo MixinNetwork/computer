@@ -196,7 +196,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 		r, err := c.rpcClient.GetTransaction(ctx,
 			solana.MustSignatureFromBase58(signature),
 			&rpc.GetTransactionOpts{
-				Encoding:                       solana.EncodingBase58,
+				Encoding:                       solana.EncodingBase64,
 				MaxSupportedTransactionVersion: &rpc.MaxSupportedTransactionVersion1,
 				Commitment:                     rpc.CommitmentConfirmed, // getTransaction requires this min level
 			},
@@ -295,7 +295,7 @@ func (c *Client) GetMint(ctx context.Context, mint solana.PublicKey) (*token.Min
 }
 
 func (c *Client) SendTransaction(ctx context.Context, tx *solana.Transaction) (string, error) {
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return "", err
 	}
 	sig, err := c.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{

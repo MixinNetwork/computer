@@ -472,9 +472,9 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 	if err != nil {
 		return nil, nil, err
 	}
-	err = solanaApp.ValidateTransactionSize(tx)
+	err = solanaApp.ValidateTransaction(tx)
 	if err != nil {
-		logger.Printf("solana.ValidateTransactionSize(%s %s) => %v", req.Id, id, err)
+		logger.Printf("solana.ValidateTransaction(%s %s) => %v", req.Id, id, err)
 		return nil, nil, err
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
