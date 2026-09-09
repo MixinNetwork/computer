@@ -211,7 +211,7 @@ func BuildSignersGetter(keys ...solana.PrivateKey) func(key solana.PublicKey) *s
 	}
 }
 
-func (c *Client) buildInitialTxWithNonceAccount(ctx context.Context, payer solana.PublicKey, nonce NonceAccount) *solana.TransactionBuilder {
+func (c *Client) buildInitialTxWithNonceAccount(payer solana.PublicKey, nonce NonceAccount) *solana.TransactionBuilder {
 	b := solana.NewTransactionBuilder()
 	b.SetRecentBlockHash(nonce.Hash)
 	b.SetFeePayer(payer)
@@ -220,9 +220,6 @@ func (c *Client) buildInitialTxWithNonceAccount(ctx context.Context, payer solan
 		solana.SysVarRecentBlockHashesPubkey,
 		payer,
 	).Build())
-
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
-	b.AddInstruction(computerPriceIns)
 	return b
 }
 
