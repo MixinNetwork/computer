@@ -19,6 +19,8 @@ import (
 	"github.com/MixinNetwork/safe/apps/ethereum"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
+	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -534,41 +536,147 @@ func (node *Node) checkUserSystemCall(ctx context.Context, tx *solana.Transactio
 	return nil
 }
 
-func (node *Node) comparePrepareCallWithSolanaTx(tx *solana.Transaction, as []*ReferencedTxAsset) error {
-	changes := make(map[string]*solanaApp.Transfer)
-	for _, ix := range tx.Message.Instructions {
-		transfer := solanaApp.ExtractInitialTransfersFromInstruction(&tx.Message, ix)
-		if transfer == nil || transfer.Sender == node.SolanaPayer().String() {
-			continue
+type prepareMovement struct {
+	Kind         string
+	TokenAddress string
+	Source       string
+	Destination  string
+}
+
+func (m prepareMovement) key() string {
+	return strings.Join([]string{m.Kind, m.TokenAddress, m.Source, m.Destination}, ":")
+}
+
+func (node *Node) comparePrepareCallWithSolanaTx(tx *solana.Transaction, as []*ReferencedTxAsset, mtg, user solana.PublicKey) error {
+	expected := make(map[string]*big.Int)
+	for _, a := range as {
+		amount := a.Amount.Mul(decimal.New(1, int32(a.Decimal))).BigInt()
+		if amount.Sign() <= 0 {
+			return fmt.Errorf("invalid prepare asset amount: %s %s", a.AssetId, a.Amount.String())
 		}
-		key := transfer.TokenAddress
-		old := changes[key]
-		if old != nil {
-			changes[key].Value = new(big.Int).Add(old.Value, transfer.Value)
-			continue
+
+		var movement prepareMovement
+		switch {
+		case a.Solana && a.AssetId == a.ChainId:
+			source := mtg.String()
+			if a.Fee {
+				source = node.SolanaPayer().String()
+			}
+			movement = prepareMovement{
+				Kind:         "system-transfer",
+				TokenAddress: a.Address,
+				Source:       source,
+				Destination:  user.String(),
+			}
+		case a.Solana:
+			movement = prepareMovement{
+				Kind:         "token-transfer",
+				TokenAddress: a.Address,
+				Source:       mtg.String(),
+				Destination:  user.String(),
+			}
+		default:
+			movement = prepareMovement{
+				Kind:         "token-mint",
+				TokenAddress: a.Address,
+				Destination:  user.String(),
+			}
 		}
-		changes[key] = transfer
+
+		addPrepareMovement(expected, movement, amount)
 	}
 
-	assets := make(map[string]*ReferencedTxAsset, len(as))
-	for _, a := range as {
-		if assets[a.Address] != nil {
-			assets[a.Address].Amount = assets[a.Address].Amount.Add(a.Amount)
+	actual := make(map[string]*big.Int)
+	for index, ix := range tx.Message.Instructions {
+		programKey, err := tx.Message.Program(ix.ProgramIDIndex)
+		if err != nil {
+			panic(err)
+		}
+		accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			panic(err)
+		}
+
+		switch programKey {
+		case system.ProgramID:
+			transfer, ok := solanaApp.DecodeSystemTransfer(accounts, ix.Data)
+			if !ok {
+				continue
+			}
+			recipient := transfer.GetRecipientAccount().PublicKey
+			if !recipient.Equals(user) {
+				return fmt.Errorf("invalid prepare SOL recipient: %s", recipient.String())
+			}
+			movement := prepareMovement{
+				Kind:         "system-transfer",
+				TokenAddress: solanaApp.SolanaEmptyAddress,
+				Source:       transfer.GetFundingAccount().PublicKey.String(),
+				Destination:  user.String(),
+			}
+			addPrepareMovement(actual, movement, new(big.Int).SetUint64(*transfer.Lamports))
+		case solana.TokenProgramID, solana.Token2022ProgramID:
+			if transfer, ok := solanaApp.DecodeTokenTransferChecked(accounts, ix.Data); ok {
+				mint := transfer.GetMintAccount().PublicKey
+				recipient := transfer.GetDestinationAccount().PublicKey
+				userAta := solanaApp.FindAssociatedTokenAddress(user, mint, programKey)
+				if !recipient.Equals(userAta) {
+					return fmt.Errorf("invalid prepare token recipient: %s", recipient.String())
+				}
+				movement := prepareMovement{
+					Kind:         "token-transfer",
+					TokenAddress: mint.String(),
+					Source:       transfer.GetOwnerAccount().PublicKey.String(),
+					Destination:  user.String(),
+				}
+				addPrepareMovement(actual, movement, new(big.Int).SetUint64(*transfer.Amount))
+				continue
+			}
+			if mint, ok := solanaApp.DecodeTokenMintTo(accounts, ix.Data); ok {
+				token := mint.GetMintAccount().PublicKey
+				recipient := mint.GetDestinationAccount().PublicKey
+				userAta := solanaApp.FindAssociatedTokenAddress(user, token, programKey)
+				if !recipient.Equals(userAta) {
+					return fmt.Errorf("invalid prepare mint recipient: %s", recipient.String())
+				}
+				movement := prepareMovement{
+					Kind:         "token-mint",
+					TokenAddress: token.String(),
+					Destination:  user.String(),
+				}
+				addPrepareMovement(actual, movement, new(big.Int).SetUint64(*mint.Amount))
+				continue
+			}
+		case tokenAta.ProgramID, solana.ComputeBudget, solana.MemoProgramID:
 			continue
+		default:
+			return fmt.Errorf("invalid prepare instruction %d program: %s", index, programKey.String())
 		}
-		assets[a.Address] = a
 	}
-	for addr, change := range changes {
-		a := assets[addr]
-		if a == nil {
-			return fmt.Errorf("invalid missed referenced asset: %v", a)
+
+	for key, amount := range actual {
+		want := expected[key]
+		if want == nil {
+			return fmt.Errorf("unexpected prepare asset movement: %s %s", key, amount.String())
 		}
-		expected := a.Amount.Mul(decimal.New(1, int32(a.Decimal))).BigInt()
-		if expected.Cmp(change.Value) != 0 {
-			return fmt.Errorf("invalid referenced asset: %s %s %s", a.AssetId, change.Value.String(), expected.String())
+		if want.Cmp(amount) != 0 {
+			return fmt.Errorf("invalid prepare asset amount: %s %s %s", key, amount.String(), want.String())
+		}
+	}
+	for key, want := range expected {
+		got := actual[key]
+		if got == nil {
+			return fmt.Errorf("missing prepare asset movement: %s %s", key, want.String())
 		}
 	}
 	return nil
+}
+
+func addPrepareMovement(m map[string]*big.Int, movement prepareMovement, amount *big.Int) {
+	key := movement.key()
+	if m[key] == nil {
+		m[key] = new(big.Int)
+	}
+	m[key].Add(m[key], amount)
 }
 
 func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*ReferencedTxAsset, tx *solana.Transaction, signature, user string) error {

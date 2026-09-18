@@ -334,9 +334,24 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	switch flag {
 	case ConfirmFlagNonceAvailable:
 		as := node.GetSystemCallRelatedAsset(ctx, os)
+		expectedPrepareAssets := append([]*ReferencedTxAsset(nil), as...)
+		fee, err := node.getSystemCallFeeFromXIN(ctx, call)
+		if err != nil {
+			return node.failRequest(ctx, req, "")
+		}
+		if fee != nil {
+			for _, a := range node.GetSystemCallRelatedAsset(ctx, []*store.UserOutput{fee}) {
+				a.Fee = true
+				expectedPrepareAssets = append(expectedPrepareAssets, a)
+			}
+		}
 		var sessions []*store.Session
 		prepare, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[16:])
 		if err != nil {
+			return node.failRequest(ctx, req, "")
+		}
+		if len(expectedPrepareAssets) > 0 && prepare == nil {
+			logger.Printf("missing prepare for system call references or fees: %s", call.RequestId)
 			return node.failRequest(ctx, req, "")
 		}
 		if prepare != nil {
@@ -357,7 +372,7 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 			if err != nil {
 				return node.failRequest(ctx, req, "")
 			}
-			err = node.comparePrepareCallWithSolanaTx(tx, as)
+			err = node.comparePrepareCallWithSolanaTx(tx, expectedPrepareAssets, node.getMTGAddress(ctx), solana.MustPublicKeyFromBase58(user.ChainAddress))
 			logger.Printf("node.comparePrepareCallWithSolanaTx(%s) => %v", call.RequestId, err)
 			if err != nil {
 				return node.failRequest(ctx, req, "")
