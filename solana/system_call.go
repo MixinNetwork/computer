@@ -16,6 +16,7 @@ import (
 	mc "github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
+	"github.com/MixinNetwork/safe/apps/ethereum"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gofrs/uuid/v5"
@@ -587,66 +588,68 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		panic(err)
 	}
 
-	assets := make(map[string]*ReferencedTxAsset)
+	expectedTransfers := make(map[string]*ReferencedTxAsset)
+	expectedBurns := make(map[string]*ReferencedTxAsset)
 	for _, a := range as {
-		if assets[a.Address] != nil {
-			assets[a.Address].Amount = assets[a.Address].Amount.Add(a.Amount)
-			continue
+		// Keep Solana transfers and external-asset burns in separate ledgers.
+		// A mixed burn+transfer for the same mint must not satisfy one expected amount.
+		if a.Solana {
+			addExpectedSystemCallMovement(expectedTransfers, a)
+		} else {
+			addExpectedSystemCallMovement(expectedBurns, a)
 		}
-		assets[a.Address] = a
 	}
 	cs := node.buildUserBalanceChangesFromMeta(ctx, utx, rpcTx.Meta, solana.MPK(user))
 	for address, change := range cs {
-		old := assets[address]
-		if old != nil {
-			assets[address].Amount = assets[address].Amount.Add(change.Amount)
+		if old := expectedTransfers[address]; old != nil {
+			old.Amount = old.Amount.Add(change.Amount)
+			continue
+		}
+		if old := expectedBurns[address]; old != nil {
+			old.Amount = old.Amount.Add(change.Amount)
 			continue
 		}
 		if !change.Amount.IsPositive() {
 			continue
 		}
-		assets[address] = &ReferencedTxAsset{
+		asset := &ReferencedTxAsset{
+			Solana:  true,
 			Address: address,
 			Decimal: int(change.Decimals),
 			Amount:  change.Amount,
+			AssetId: solanaApp.SolanaChainBase,
+			ChainId: solanaApp.SolanaChainBase,
+		}
+		if address != solanaApp.SolanaEmptyAddress {
+			asset.AssetId = ethereum.BuildChainAssetId(solanaApp.SolanaChainBase, address)
+
+			da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+			if err != nil {
+				panic(fmt.Errorf("store.ReadDeployedAssetByAddress(%s) => %v", address, err))
+			}
+			if da != nil {
+				asset.Solana = false
+				asset.AssetId = da.AssetId
+				asset.ChainId = da.ChainId
+			}
+		}
+		if asset.Solana {
+			addExpectedSystemCallMovement(expectedTransfers, asset)
+		} else {
+			addExpectedSystemCallMovement(expectedBurns, asset)
 		}
 	}
 
-	changes := make(map[string]*solanaApp.Transfer)
-	for _, ix := range tx.Message.Instructions {
-		transfer := solanaApp.ExtractInitialTransfersFromInstruction(&tx.Message, ix)
-		if transfer == nil || transfer.Sender == node.SolanaPayer().String() {
-			continue
-		}
-		key := transfer.TokenAddress
-		old := changes[key]
-		if old != nil {
-			changes[key].Value = new(big.Int).Add(old.Value, transfer.Value)
-			continue
-		}
-		changes[key] = transfer
+	actualTransfers, actualBurns := buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
+	// Compare each instruction class independently so one class cannot make up
+	// for a shortfall in the other.
+	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementTransfer, expectedTransfers, actualTransfers)
+	if err != nil {
+		return err
 	}
-	for address, c := range changes {
-		amount := decimal.NewFromBigInt(c.Value, -int32(c.Decimal))
-		dust := decimal.RequireFromString("0.00000001")
-		if amount.Cmp(dust) < 0 {
-			continue
-		}
-
-		isNFT, err := node.RPCCheckNFT(ctx, address)
-		if err != nil {
-			panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
-		} else if isNFT {
-			continue
-		}
-
-		old := assets[address]
-		if old == nil {
-			return fmt.Errorf("invalid missed user balance change: %s", address)
-		}
-		if old.Amount.Cmp(amount) != 0 {
-			return fmt.Errorf("invalid user balance change: %s %s %s", address, amount.String(), old.Amount.String())
-		}
+	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementBurn, expectedBurns, actualBurns)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -676,45 +679,186 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 		panic(err)
 	}
 
-	transfers = nil
-	for _, ix := range tx.Message.Instructions {
-		if transfer := solanaApp.ExtractInitialTransfersFromInstruction(&tx.Message, ix); transfer != nil {
-			transfers = append(transfers, transfer)
-		}
+	actualTransfers, actualBurns := buildInitialAssetMovementMaps(tx, user, "")
+	// Deposits are generated per receiver, while expectedChanges is keyed as
+	// receiver:mint. Filter to this user before splitting transfer and burn.
+	expectedTransfers, expectedBurns := node.collectExpectedDepositMovements(ctx, expectedChanges, user)
+	err = node.compareDepositMovements(ctx, signature, tx, solanaApp.InitialAssetMovementTransfer, expectedTransfers, actualTransfers)
+	if err != nil {
+		return err
 	}
-	actualChanges := make(map[string]*big.Int)
-	for _, t := range transfers {
-		if t.Sender != user {
+	err = node.compareDepositMovements(ctx, signature, tx, solanaApp.InitialAssetMovementBurn, expectedBurns, actualBurns)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (node *Node) collectExpectedDepositMovements(ctx context.Context, expectedChanges map[string]*big.Int, user string) (map[string]*big.Int, map[string]*big.Int) {
+	expectedTransfers := make(map[string]*big.Int)
+	expectedBurns := make(map[string]*big.Int)
+	changes := filterExpectedDepositChangesByUser(expectedChanges, user)
+	for address, expected := range changes {
+		if node.shouldSkipExpectedDepositMovement(ctx, address, expected) {
 			continue
 		}
-		key := fmt.Sprintf("%s:%s", t.Sender, t.TokenAddress)
-		total := actualChanges[key]
-		if total != nil {
-			actualChanges[key] = new(big.Int).Add(total, t.Value)
-		} else {
-			actualChanges[key] = t.Value
+
+		expectedMap := expectedTransfers
+		if node.isDeployedAssetAddress(ctx, address) {
+			expectedMap = expectedBurns
 		}
+		expectedMap[address] = addBigInt(expectedMap[address], expected)
 	}
+	return expectedTransfers, expectedBurns
+}
+
+func filterExpectedDepositChangesByUser(expectedChanges map[string]*big.Int, user string) map[string]*big.Int {
+	changes := make(map[string]*big.Int)
 	for key, expected := range expectedChanges {
-		address := strings.Split(key, ":")[1]
-		if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
+		receiver, address, ok := strings.Cut(key, ":")
+		if !ok || receiver != user {
 			continue
 		}
-		isNFT, err := node.RPCCheckNFT(ctx, address)
-		if err != nil {
-			panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
-		} else if isNFT {
+		changes[address] = addBigInt(changes[address], expected)
+	}
+	return changes
+}
+
+func (node *Node) shouldSkipExpectedDepositMovement(ctx context.Context, address string, expected *big.Int) bool {
+	if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
+		return true
+	}
+	isNFT, err := node.RPCCheckNFT(ctx, address)
+	if err != nil {
+		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
+	}
+	return isNFT
+}
+
+func addExpectedSystemCallMovement(m map[string]*ReferencedTxAsset, asset *ReferencedTxAsset) {
+	old := m[asset.Address]
+	if old != nil {
+		old.Amount = old.Amount.Add(asset.Amount)
+		return
+	}
+	copy := *asset
+	m[asset.Address] = &copy
+}
+
+func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, excludeSender string) (map[string]*solanaApp.InitialAssetMovement, map[string]*solanaApp.InitialAssetMovement) {
+	transfers := make(map[string]*solanaApp.InitialAssetMovement)
+	burns := make(map[string]*solanaApp.InitialAssetMovement)
+	for _, movement := range solanaApp.ExtractInitialAssetMovements(tx) {
+		if includeSender != "" && movement.Sender != includeSender {
 			continue
 		}
-		actual := actualChanges[key]
-		if actual == nil {
-			return fmt.Errorf("non-existed deposit: %s %s %s", signature, key, tx.MustToBase64())
+		if excludeSender != "" && movement.Sender == excludeSender {
+			continue
 		}
-		if actual.Cmp(expected) != 0 {
-			return fmt.Errorf("invalid deposit: %s %s %s %s %s", signature, key, expected.String(), actual.String(), tx.MustToBase64())
+		target := transfers
+		if movement.Kind == solanaApp.InitialAssetMovementBurn {
+			target = burns
+		}
+		old := target[movement.TokenAddress]
+		if old == nil {
+			copy := *movement
+			copy.Value = new(big.Int).Set(movement.Value)
+			target[movement.TokenAddress] = &copy
+			continue
+		}
+		old.Value = addBigInt(old.Value, movement.Value)
+	}
+	return transfers, burns
+}
+
+func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaApp.InitialAssetMovementKind, expected map[string]*ReferencedTxAsset, actual map[string]*solanaApp.InitialAssetMovement) error {
+	for address, asset := range expected {
+		if node.shouldSkipPostProcessMovement(ctx, address, asset.Amount) {
+			continue
+		}
+		expectedValue := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal))).BigInt()
+		movement := actual[address]
+		if movement == nil {
+			return fmt.Errorf("missing %s user balance change: %s", kind, address)
+		}
+		if movement.Value.Cmp(expectedValue) != 0 {
+			actualAmount := decimal.NewFromBigInt(movement.Value, -int32(movement.Decimal))
+			return fmt.Errorf("invalid %s user balance change: %s %s %s", kind, address, actualAmount.String(), asset.Amount.String())
+		}
+	}
+	for address, movement := range actual {
+		amount := decimal.NewFromBigInt(movement.Value, -int32(movement.Decimal))
+		if node.shouldSkipPostProcessMovement(ctx, address, amount) {
+			continue
+		}
+		if expected[address] == nil {
+			return fmt.Errorf("unexpected %s user balance change: %s %s", kind, address, amount.String())
 		}
 	}
 	return nil
+}
+
+func (node *Node) shouldSkipPostProcessMovement(ctx context.Context, address string, amount decimal.Decimal) bool {
+	dust := decimal.RequireFromString("0.00000001")
+	if amount.Cmp(dust) < 0 {
+		return true
+	}
+
+	isNFT, err := node.RPCCheckNFT(ctx, address)
+	if err != nil {
+		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
+	}
+	return isNFT
+}
+
+func (node *Node) compareDepositMovements(ctx context.Context, signature string, tx *solana.Transaction, kind solanaApp.InitialAssetMovementKind, expected map[string]*big.Int, actual map[string]*solanaApp.InitialAssetMovement) error {
+	for address, amount := range expected {
+		movement := actual[address]
+		if movement == nil {
+			return fmt.Errorf("non-existed %s deposit: %s %s %s", kind, signature, address, tx.MustToBase64())
+		}
+		if movement.Value.Cmp(amount) != 0 {
+			return fmt.Errorf("invalid %s deposit: %s %s %s %s %s", kind, signature, address, amount.String(), movement.Value.String(), tx.MustToBase64())
+		}
+	}
+	for address, movement := range actual {
+		if expected[address] == nil {
+			if node.shouldSkipDepositMovement(ctx, address, movement.Value) {
+				continue
+			}
+			return fmt.Errorf("unexpected %s deposit: %s %s %s %s", kind, signature, address, movement.Value.String(), tx.MustToBase64())
+		}
+	}
+	return nil
+}
+
+func (node *Node) shouldSkipDepositMovement(ctx context.Context, address string, value *big.Int) bool {
+	if address == solanaApp.SolanaEmptyAddress && value.Uint64() < 10 {
+		return true
+	}
+	isNFT, err := node.RPCCheckNFT(ctx, address)
+	if err != nil {
+		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
+	}
+	return isNFT
+}
+
+func (node *Node) isDeployedAssetAddress(ctx context.Context, address string) bool {
+	if address == solanaApp.SolanaEmptyAddress {
+		return false
+	}
+	da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+	if err != nil {
+		panic(fmt.Errorf("store.ReadDeployedAssetByAddress(%s) => %v", address, err))
+	}
+	return da != nil
+}
+
+func addBigInt(a, b *big.Int) *big.Int {
+	if a == nil {
+		return new(big.Int).Set(b)
+	}
+	return new(big.Int).Add(a, b)
 }
 
 func attachSystemCall(extra []byte, cid string, raw []byte) []byte {
