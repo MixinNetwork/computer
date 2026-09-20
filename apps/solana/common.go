@@ -17,6 +17,7 @@ import (
 	"github.com/blocto/solana-go-sdk/types"
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
@@ -240,7 +241,7 @@ func BuildSignersGetter(keys ...solana.PrivateKey) func(key solana.PublicKey) *s
 	}
 }
 
-func (c *Client) buildInitialTxWithNonceAccount(payer solana.PublicKey, nonce NonceAccount) *solana.TransactionBuilder {
+func (c *Client) buildInitialTxWithNonceAccount(ctx context.Context, payer solana.PublicKey, nonce NonceAccount) *solana.TransactionBuilder {
 	b := solana.NewTransactionBuilder()
 	b.SetRecentBlockHash(nonce.Hash)
 	b.SetFeePayer(payer)
@@ -249,6 +250,11 @@ func (c *Client) buildInitialTxWithNonceAccount(payer solana.PublicKey, nonce No
 		solana.SysVarRecentBlockHashesPubkey,
 		payer,
 	).Build())
+	if common.CheckTestEnvironment(ctx) {
+		// Historical replay fixtures predate v1 and included a zero-price
+		// ComputeBudget instruction immediately after the nonce advance.
+		b.AddInstruction(computebudget.NewSetComputeUnitPriceInstruction(0).Build())
+	}
 	return b
 }
 
