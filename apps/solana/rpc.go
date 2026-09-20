@@ -319,6 +319,7 @@ func (c *Client) SendTransaction(ctx context.Context, tx *solana.Transaction) (s
 		return "", err
 	}
 	sig, err := c.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
+		Encoding:            solana.EncodingBase64,
 		SkipPreflight:       true,
 		PreflightCommitment: rpc.CommitmentProcessed,
 	})
