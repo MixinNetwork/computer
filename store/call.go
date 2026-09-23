@@ -630,13 +630,13 @@ func (s *SQLite3Store) CheckUnfinishedSubCalls(ctx context.Context, call *System
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
+	query := "SELECT 1 FROM system_calls WHERE superior_id=? AND state=? AND call_type=? LIMIT 1"
+	var exists int
+	err := s.db.QueryRowContext(ctx, query, call.RequestId, common.RequestStatePending, CallTypePrepare).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
 	}
-	defer common.Rollback(tx)
-
-	return s.checkExistence(ctx, tx, "SELECT id FROM system_calls WHERE call_type=? AND state=? AND superior_id=?", CallTypePrepare, common.RequestStatePending, call.RequestId)
+	return err == nil, err
 }
 
 func (s *SQLite3Store) CheckUnfinishedPreviousMainCalls(ctx context.Context, call *SystemCall) (bool, error) {
