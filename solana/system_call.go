@@ -547,7 +547,7 @@ func (m prepareMovement) key() string {
 	return strings.Join([]string{m.Kind, m.TokenAddress, m.Source, m.Destination}, ":")
 }
 
-func (node *Node) comparePrepareCallWithSolanaTx(tx *solana.Transaction, as []*ReferencedTxAsset, mtg, user solana.PublicKey) error {
+func (node *Node) comparePrepareCallWithSolanaTx(tx *solana.Transaction, as []*ReferencedTxAsset, mtg, user solana.PublicKey, allowUnknownPayerFee bool) error {
 	expected := make(map[string]*big.Int)
 	for _, a := range as {
 		amount := a.Amount.Mul(decimal.New(1, int32(a.Decimal))).BigInt()
@@ -612,6 +612,9 @@ func (node *Node) comparePrepareCallWithSolanaTx(tx *solana.Transaction, as []*R
 				TokenAddress: solanaApp.SolanaEmptyAddress,
 				Source:       transfer.GetFundingAccount().PublicKey.String(),
 				Destination:  user.String(),
+			}
+			if allowUnknownPayerFee && movement.Source == node.SolanaPayer().String() {
+				continue
 			}
 			addPrepareMovement(actual, movement, new(big.Int).SetUint64(*transfer.Lamports))
 		case solana.TokenProgramID, solana.Token2022ProgramID:
