@@ -488,6 +488,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 				continue
 			}
 			err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
+			logger.Printf("store.UpdateNonceAccount(%s %s %s) => %v", nonce.Address, newNonceHash.String(), call.RequestId, err)
 			if err != nil {
 				panic(err)
 			}

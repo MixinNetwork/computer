@@ -159,9 +159,13 @@ func (c *Client) RPCGetBalance(ctx context.Context, account solana.PublicKey) (u
 }
 
 func (c *Client) RPCGetAccount(ctx context.Context, account solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
+	return c.rpcGetAccount(ctx, account, rpc.CommitmentProcessed)
+}
+
+func (c *Client) rpcGetAccount(ctx context.Context, account solana.PublicKey, commitment rpc.CommitmentType) (*rpc.GetAccountInfoResult, error) {
 	for {
 		result, err := c.rpcClient.GetAccountInfoWithOpts(ctx, account, &rpc.GetAccountInfoOpts{
-			Commitment: rpc.CommitmentProcessed,
+			Commitment: commitment,
 		})
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
@@ -262,7 +266,7 @@ func (c *Client) RPCGetTokenAccountsByOwner(ctx context.Context, owner solana.Pu
 }
 
 func (c *Client) GetNonceAccountHash(ctx context.Context, nonce solana.PublicKey) (*solana.Hash, error) {
-	account, err := c.RPCGetAccount(ctx, nonce)
+	account, err := c.rpcGetAccount(ctx, nonce, rpc.CommitmentFinalized)
 	if err != nil {
 		return nil, fmt.Errorf("solana.GetAccountInfo() => %v", err)
 	}
