@@ -3,19 +3,17 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	solanaApp "github.com/MixinNetwork/computer/apps/solana"
-	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
-	"github.com/gagliardetto/solana-go"
 )
 
 const (
-	oversizedDepositMigrationKey = "SCHEMA:VERSION:OVERSIZED_DEPOSIT_7E823E4C"
-	oversizedDepositSystemCallID = "7e823e4c-b389-320a-b241-ff96c30d730b"
+	stalePostProcessNonceMigrationKey = "SCHEMA:VERSION:STALE_POST_PROCESS_NONCE_E3AAD597"
+	stalePostProcessSystemCallID      = "e3aad597-2f6a-334d-b4fb-de634cfd6d81"
+	stalePostProcessNonceHash         = "9nFUY4moFN6mEc6MhstcEeHhevziLx4kGk32sny9TitE"
 )
 
 func (s *SQLite3Store) Migrate(ctx context.Context) error {
@@ -28,7 +26,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	}
 	defer common.Rollback(tx)
 
-	err = s.migrateOversizedDepositSystemCall(ctx, tx)
+	err = s.migrateStalePostProcessNonce(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -36,41 +34,33 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) migrateOversizedDepositSystemCall(ctx context.Context, tx *sql.Tx) error {
-	applied, err := s.checkExistence(ctx, tx, "SELECT value FROM properties WHERE key=?", oversizedDepositMigrationKey)
+func (s *SQLite3Store) migrateStalePostProcessNonce(ctx context.Context, tx *sql.Tx) error {
+	applied, err := s.checkExistence(ctx, tx, "SELECT value FROM properties WHERE key=?", stalePostProcessNonceMigrationKey)
 	if err != nil || applied {
 		return err
 	}
 
-	call, err := s.ReadSystemCallByRequestId(ctx, oversizedDepositSystemCallID, common.RequestStatePending)
-	if err != nil {
-		return fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v", oversizedDepositSystemCallID, err)
+	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE id=?", strings.Join(systemCallCols, ","))
+	call, err := systemCallFromRow(tx.QueryRowContext(ctx, query, stalePostProcessSystemCallID))
+	if err != nil || call == nil {
+		return fmt.Errorf("SELECT stale post-process system call %v %v", call, err)
 	}
-	if call == nil {
-		return s.writeProperty(ctx, tx, oversizedDepositMigrationKey, "system call not found")
-	}
-	if call.Type != CallTypeDeposit {
-		return fmt.Errorf("invalid system call type for oversized deposit migration: %s", call.Type)
+	if call.Type != CallTypePostProcess || call.State != common.RequestStatePending {
+		return fmt.Errorf("invalid system call type for stale post-process nonce migration: %s %d", call.Type, call.State)
 	}
 
-	solanaTx, err := solana.TransactionFromBase64(call.Raw)
+	now := time.Now().UTC()
+	query = "UPDATE system_calls SET state=?, updated_at=? WHERE id=? AND call_type=? AND state=?"
+	err = s.execOne(ctx, tx, query, common.RequestStateFailed, now, stalePostProcessSystemCallID, CallTypePostProcess, common.RequestStatePending)
 	if err != nil {
-		return fmt.Errorf("solana.TransactionFromBase64(%s) => %v", oversizedDepositSystemCallID, err)
-	}
-	sizeErr := solanaApp.ValidateTransactionSize(solanaTx)
-	if sizeErr == nil {
-		return s.writeProperty(ctx, tx, oversizedDepositMigrationKey, "transaction within size limit")
-	}
-	if !errors.Is(sizeErr, solanaApp.ErrTransactionTooLarge) {
-		return fmt.Errorf("solana.ValidateTransactionSize(%s) => %v", oversizedDepositSystemCallID, sizeErr)
-	}
-	logger.Printf("store.migrateOversizedDepositSystemCall(%s) => %v", oversizedDepositSystemCallID, sizeErr)
-
-	query := "UPDATE system_calls SET state=?, updated_at=? WHERE id=? AND call_type=? AND state=?"
-	err = s.execOne(ctx, tx, query, common.RequestStateFailed, time.Now().UTC(), oversizedDepositSystemCallID, CallTypeDeposit, common.RequestStatePending)
-	if err != nil {
-		return fmt.Errorf("SQLite3Store UPDATE oversized deposit system_calls %v", err)
+		return fmt.Errorf("UPDATE stale post-process system_calls %v", err)
 	}
 
-	return s.writeProperty(ctx, tx, oversizedDepositMigrationKey, sizeErr.Error())
+	query = "UPDATE nonce_accounts SET hash=?, mix=NULL, call_id=NULL, updated_at=? WHERE address=?"
+	err = s.execOne(ctx, tx, query, stalePostProcessNonceHash, now, call.NonceAccount)
+	if err != nil {
+		return fmt.Errorf("UPDATE stale post-process nonce_accounts %v", err)
+	}
+
+	return s.writeProperty(ctx, tx, stalePostProcessNonceMigrationKey, "done")
 }
