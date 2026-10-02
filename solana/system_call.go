@@ -18,6 +18,7 @@ import (
 	"github.com/MixinNetwork/mixin/logger"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
+	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -384,9 +385,9 @@ func (node *Node) verifyFailedPostProcessCall(ctx context.Context, call, main, p
 	var expected *solana.Transaction
 	switch call.Type {
 	case store.CallTypeMain:
-		expected = node.CreatePostProcessTransaction(ctx, main, nonce, nil, nil)
+		expected = node.createPostProcessTransaction(ctx, main, nonce, nil, nil, actual)
 	case store.CallTypePrepare:
-		expected = node.CreateRefundWithdrawalTransaction(ctx, call, main, nonce)
+		expected = node.createRefundWithdrawalTransaction(ctx, call, main, nonce, actual)
 	default:
 		return fmt.Errorf("invalid failed post-process superior type: %s", call.Type)
 	}
@@ -406,12 +407,25 @@ func compareCleanupTransactions(actual, expected *solana.Transaction) error {
 	if !slices.Equal(actual.Message.Signers(), expected.Message.Signers()) {
 		return fmt.Errorf("invalid cleanup signers: %v", actual.Message.Signers())
 	}
-	if len(actual.Message.Instructions) != len(expected.Message.Instructions) {
-		return fmt.Errorf("invalid cleanup instruction count: %d %d", len(actual.Message.Instructions), len(expected.Message.Instructions))
+	err := compareCleanupV1Config(actual, expected)
+	if err != nil {
+		return err
 	}
 
-	for i, actualIx := range actual.Message.Instructions {
-		expectedIx := expected.Message.Instructions[i]
+	actualInstructions, err := cleanupInstructions(actual)
+	if err != nil {
+		return err
+	}
+	expectedInstructions, err := cleanupInstructions(expected)
+	if err != nil {
+		return err
+	}
+	if len(actualInstructions) != len(expectedInstructions) {
+		return fmt.Errorf("invalid cleanup instruction count: %d %d", len(actualInstructions), len(expectedInstructions))
+	}
+
+	for i, actualIx := range actualInstructions {
+		expectedIx := expectedInstructions[i]
 		actualProgram, err := actual.Message.Program(actualIx.ProgramIDIndex)
 		if err != nil {
 			return fmt.Errorf("resolve cleanup program %d: %w", i, err)
@@ -442,17 +456,64 @@ func compareCleanupTransactions(actual, expected *solana.Transaction) error {
 			}
 		}
 
-		if i == 1 && actualProgram == solana.ComputeBudget {
-			if len(actualIx.Data) != 9 || len(expectedIx.Data) != 9 || actualIx.Data[0] != expectedIx.Data[0] {
-				return fmt.Errorf("invalid compute budget instruction")
-			}
-			continue
-		}
 		if !bytes.Equal(actualIx.Data, expectedIx.Data) {
 			return fmt.Errorf("invalid cleanup instruction data: %d", i)
 		}
 	}
 	return nil
+}
+
+func compareCleanupV1Config(actual, expected *solana.Transaction) error {
+	if actual.Message.GetVersion() != solana.MessageVersionV1 {
+		return nil
+	}
+	if expected.Message.GetVersion() != solana.MessageVersionV1 {
+		return fmt.Errorf("invalid cleanup transaction version")
+	}
+
+	a, e := actual.Message.TransactionConfig, expected.Message.TransactionConfig
+	if !equalOptionalUint32(a.ComputeUnitLimit, e.ComputeUnitLimit) {
+		return fmt.Errorf("invalid cleanup compute unit limit")
+	}
+	if !equalOptionalUint32(a.LoadedAccountsDataSizeLimit, e.LoadedAccountsDataSizeLimit) {
+		return fmt.Errorf("invalid cleanup loaded accounts data size limit")
+	}
+	if !equalOptionalUint32(a.HeapSize, e.HeapSize) {
+		return fmt.Errorf("invalid cleanup heap size")
+	}
+	if a.PriorityFee == nil || e.PriorityFee == nil {
+		return fmt.Errorf("invalid cleanup priority fee")
+	}
+	return nil
+}
+
+func equalOptionalUint32(a, b *uint32) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+// cleanupInstructions removes the legacy priority-fee instruction so cleanup
+// calls created before the v1 rollout can still be verified after deployment.
+func cleanupInstructions(tx *solana.Transaction) ([]solana.CompiledInstruction, error) {
+	instructions := make([]solana.CompiledInstruction, 0, len(tx.Message.Instructions))
+	foundPriorityFee := false
+	for i, instruction := range tx.Message.Instructions {
+		program, err := tx.Message.Program(instruction.ProgramIDIndex)
+		if err != nil {
+			return nil, fmt.Errorf("resolve cleanup program %d: %w", i, err)
+		}
+		if program != solana.ComputeBudget {
+			instructions = append(instructions, instruction)
+			continue
+		}
+		if tx.Message.GetVersion() == solana.MessageVersionV1 ||
+			foundPriorityFee ||
+			len(instruction.Data) != 9 ||
+			instruction.Data[0] != computebudget.Instruction_SetComputeUnitPrice {
+			return nil, fmt.Errorf("invalid compute budget instruction")
+		}
+		foundPriorityFee = true
+	}
+	return instructions, nil
 }
 
 func (node *Node) getSubSystemCallFromExtra(ctx context.Context, req *store.Request, data []byte) (*store.SystemCall, *solana.Transaction, error) {
@@ -472,9 +533,9 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 	if err != nil {
 		return nil, nil, err
 	}
-	err = solanaApp.ValidateTransactionSize(tx)
+	err = solanaApp.ValidateWireTransaction(tx)
 	if err != nil {
-		logger.Printf("solana.ValidateTransactionSize(%s %s) => %v", req.Id, id, err)
+		logger.Printf("solana.ValidateWireTransaction(%s %s) => %v", req.Id, id, err)
 		return nil, nil, err
 	}
 	err = node.processTransactionWithAddressLookups(ctx, tx)
