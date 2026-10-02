@@ -16,7 +16,7 @@ const (
 	stalePostProcessNonceHash         = "9nFUY4moFN6mEc6MhstcEeHhevziLx4kGk32sny9TitE"
 )
 
-func (s *SQLite3Store) Migrate(ctx context.Context) error {
+func (s *SQLite3Store) Migrate(ctx context.Context, isObserver bool) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -26,7 +26,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	}
 	defer common.Rollback(tx)
 
-	err = s.migrateStalePostProcessNonce(ctx, tx)
+	err = s.migrateStalePostProcessNonce(ctx, tx, isObserver)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func (s *SQLite3Store) Migrate(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) migrateStalePostProcessNonce(ctx context.Context, tx *sql.Tx) error {
+func (s *SQLite3Store) migrateStalePostProcessNonce(ctx context.Context, tx *sql.Tx, isObserver bool) error {
 	applied, err := s.checkExistence(ctx, tx, "SELECT value FROM properties WHERE key=?", stalePostProcessNonceMigrationKey)
 	if err != nil || applied {
 		return err
@@ -56,10 +56,12 @@ func (s *SQLite3Store) migrateStalePostProcessNonce(ctx context.Context, tx *sql
 		return fmt.Errorf("UPDATE stale post-process system_calls %v", err)
 	}
 
-	query = "UPDATE nonce_accounts SET hash=?, mix=NULL, call_id=NULL, updated_at=? WHERE address=?"
-	err = s.execOne(ctx, tx, query, stalePostProcessNonceHash, now, call.NonceAccount)
-	if err != nil {
-		return fmt.Errorf("UPDATE stale post-process nonce_accounts %v", err)
+	if isObserver {
+		query = "UPDATE nonce_accounts SET hash=?, mix=NULL, call_id=NULL, updated_at=? WHERE address=?"
+		err = s.execOne(ctx, tx, query, stalePostProcessNonceHash, now, call.NonceAccount)
+		if err != nil {
+			return fmt.Errorf("UPDATE stale post-process nonce_accounts %v", err)
+		}
 	}
 
 	return s.writeProperty(ctx, tx, stalePostProcessNonceMigrationKey, "done")

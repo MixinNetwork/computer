@@ -70,7 +70,7 @@ func NewNode(store *store.SQLite3Store, group *mtg.Group, network Network, cf *C
 }
 
 func (node *Node) Boot(ctx context.Context, version string) {
-	err := node.store.Migrate(ctx)
+	err := node.store.Migrate(ctx, string(node.id) == node.conf.ObserverId)
 	if err != nil {
 		panic(err)
 	}
