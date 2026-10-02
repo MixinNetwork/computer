@@ -200,7 +200,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 		r, err := c.rpcClient.GetTransaction(ctx,
 			solana.MustSignatureFromBase58(signature),
 			&rpc.GetTransactionOpts{
-				Encoding:                       solana.EncodingBase58,
+				Encoding:                       solana.EncodingBase64,
 				MaxSupportedTransactionVersion: &rpc.MaxSupportedTransactionVersion1,
 				Commitment:                     rpc.CommitmentConfirmed, // getTransaction requires this min level
 			},
