@@ -506,6 +506,10 @@ func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.Syst
 }
 
 func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, tx *solana.Transaction, meta *rpc.TransactionMeta) *solana.Transaction {
+	return node.createPostProcessTransaction(ctx, call, nonce, tx, meta, nil)
+}
+
+func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, source *solana.Transaction, meta *rpc.TransactionMeta, comparison *solana.Transaction) *solana.Transaction {
 	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(call.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
@@ -522,8 +526,8 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	}
 
 	user := node.getUserSolanaPublicKeyFromCall(ctx, call)
-	if tx != nil && meta != nil {
-		changes := node.buildUserBalanceChangesFromMeta(ctx, tx, meta, user)
+	if source != nil && meta != nil {
+		changes := node.buildUserBalanceChangesFromMeta(ctx, source, meta, user)
 		for address, change := range changes {
 			old := assets[address]
 			if old != nil {
@@ -603,7 +607,18 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		return nil
 	}
 
-	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	if comparison == nil {
+		tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+		if err != nil {
+			panic(err)
+		}
+		return tx
+	}
+	builder, err := node.solana.NewTransferOrBurnTokensBuilder(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	if err != nil {
+		panic(err)
+	}
+	tx, err := buildCleanupTransactionForComparison(builder, comparison)
 	if err != nil {
 		panic(err)
 	}
@@ -611,16 +626,60 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 }
 
 func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount) *solana.Transaction {
+	return node.createRefundWithdrawalTransaction(ctx, prepare, call, nonce, nil)
+}
+
+func (node *Node) createRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount, comparison *solana.Transaction) *solana.Transaction {
 	transfers := node.buildRefundWithdrawalTransfers(ctx, prepare, call)
 	if len(transfers) == 0 {
 		return nil
 	}
 
-	tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+	if comparison == nil {
+		tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+		if err != nil {
+			panic(err)
+		}
+		return tx
+	}
+	builder, err := node.solana.NewTransferOrMintTokensBuilder(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+	if err != nil {
+		panic(err)
+	}
+	tx, err := buildCleanupTransactionForComparison(builder, comparison)
 	if err != nil {
 		panic(err)
 	}
 	return tx
+}
+
+// buildCleanupTransactionForComparison compiles rebuilt cleanup instructions
+// with the version and inline v1 configuration already committed to by the
+// transaction under review. It intentionally performs no simulation or fee
+// lookup; those values can change between creation and verification.
+func buildCleanupTransactionForComparison(builder *solana.TransactionBuilder, comparison *solana.Transaction) (*solana.Transaction, error) {
+	if comparison == nil {
+		return nil, fmt.Errorf("nil cleanup comparison transaction")
+	}
+	switch version := comparison.Message.GetVersion(); version {
+	case solana.MessageVersionLegacy:
+		builder.SetVersion(solana.MessageVersionLegacy)
+	case solana.MessageVersionV0:
+		builder.SetVersion(solana.MessageVersionV0)
+	case solana.MessageVersionV1:
+		builder.SetTransactionConfig(comparison.Message.TransactionConfig)
+	default:
+		return nil, fmt.Errorf("unsupported cleanup transaction version: %d", version)
+	}
+
+	tx, err := builder.Build()
+	if err != nil {
+		return nil, fmt.Errorf("build cleanup comparison transaction: %w", err)
+	}
+	if err := solanaApp.ValidateTransaction(tx); err != nil {
+		return nil, err
+	}
+	return tx, nil
 }
 
 func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, call *store.SystemCall) []*solanaApp.TokenTransfer {
