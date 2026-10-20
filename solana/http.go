@@ -13,6 +13,7 @@ import (
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/dimfeld/httptreemux/v5"
+	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
 
@@ -195,6 +196,11 @@ func (node *Node) httpDeployAssets(w http.ResponseWriter, r *http.Request, param
 	var assets []*store.ExternalAsset
 	now := time.Now().UTC()
 	for _, id := range body.Assets {
+		_, err := uuid.FromString(id)
+		if err != nil {
+			common.RenderJSON(w, r, http.StatusBadRequest, map[string]any{"error": "id"})
+			return
+		}
 		old, err := node.store.ReadExternalAsset(ctx, id)
 		if err != nil {
 			common.RenderJSON(w, r, http.StatusBadRequest, map[string]any{"error": err})
