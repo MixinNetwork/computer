@@ -207,7 +207,7 @@ func (node *Node) parseSignerResponse(out *mtg.Action) (*store.Request, error) {
 func (node *Node) parseUserRequest(out *mtg.Action) (*store.Request, error) {
 	a, m := mtg.DecodeMixinExtraHEX(out.Extra)
 	if a != node.conf.AppId {
-		panic(out.Extra)
+		return nil, fmt.Errorf("invalid user app id: %s", a)
 	}
 	if len(m) == 0 {
 		return nil, fmt.Errorf("node.parseUserRequest(%v)", out)

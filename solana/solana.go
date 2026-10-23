@@ -356,9 +356,9 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	return err
 }
 
-func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
+func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, *solanaApp.DeployedAsset, error) {
 	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
-	var assets []*solanaApp.DeployedAsset
+	var da *solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
 		tid = common.UniqueId(tid, common.SafeLitecoinChainId)
 		ltc, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeLitecoinChainId)
@@ -369,14 +369,12 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 		id = common.UniqueId(id, common.SafeLitecoinChainId)
 		seed := crypto.Sha256Hash(uuid.Must(uuid.FromString(id)).Bytes())
 		key := solanaApp.PrivateKeyFromSeed(seed[:])
-		assets = []*solanaApp.DeployedAsset{
-			{
-				AssetId:    ltc.AssetID,
-				Address:    "EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8",
-				Uri:        "https://uploads.mixin.one/mixin/attachments/1739005826-2dc1afa3f3327f4d29cbb02e3b41cf57d4842f3c444e8e829871699ac43d21b2",
-				PrivateKey: &key,
-				Asset:      ltc,
-			},
+		da = &solanaApp.DeployedAsset{
+			AssetId:    ltc.AssetID,
+			Address:    "EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8",
+			Uri:        "https://uploads.mixin.one/mixin/attachments/1739005826-2dc1afa3f3327f4d29cbb02e3b41cf57d4842f3c444e8e829871699ac43d21b2",
+			PrivateKey: &key,
+			Asset:      ltc,
 		}
 	} else {
 		na, err := common.SafeReadAssetUntilSufficient(ctx, asset)
@@ -392,25 +390,25 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 		id = common.UniqueId(id, node.SafeUser().SpendPrivateKey)
 		seed := crypto.Sha256Hash([]byte(id))
 		key := solanaApp.PrivateKeyFromSeed(seed[:])
-		assets = append(assets, &solanaApp.DeployedAsset{
+		da = &solanaApp.DeployedAsset{
 			AssetId:    asset,
 			Address:    key.PublicKey().String(),
 			Uri:        uri,
 			Asset:      na,
 			PrivateKey: &key,
-		})
+		}
 	}
 
 	// Account funding must use current rent rather than the node's cached quote.
 	rent, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)
 	if err != nil {
-		panic(err)
+		return "", nil, nil, err
 	}
-	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent)
+	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), []*solanaApp.DeployedAsset{da}, rent)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	return tid, tx, assets, nil
+	return tid, tx, da, nil
 }
 
 func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, string, error) {
