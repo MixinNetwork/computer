@@ -198,9 +198,8 @@ func (node *Node) deployOrConfirmAssetsLoop(ctx context.Context) {
 	for {
 		err := node.deployOrConfirmAssets(ctx)
 		if err != nil {
-			panic(err)
+			logger.Printf("node.deployOrConfirmAssets() => %v", err)
 		}
-
 		time.Sleep(loopInterval)
 	}
 }
@@ -354,6 +353,7 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 	}
 
 	for _, a := range es {
+		time.Sleep(time.Second)
 		old, err := node.store.ReadDeployedAsset(ctx, a.AssetId)
 		if err != nil {
 			return err
@@ -362,41 +362,48 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 			continue
 		}
 
-		id, tx, assets, err := node.CreateMintTransaction(ctx, a.AssetId)
-		if err != nil || tx == nil {
-			return err
-		}
-		payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
-		_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
+		err = node.deployExternalAsset(ctx, a)
 		if err != nil {
-			panic(err)
+			logger.Printf("deploy external asset %s => %v", a.AssetId, err)
+			continue
 		}
-		rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, nil)
-		if err != nil {
-			return err
-		}
-		tx, err = rpcTx.Transaction.GetTransaction()
-		if err != nil {
-			return err
-		}
-
-		extra := []byte{byte(len(assets))}
-		for _, asset := range assets {
-			extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
-			extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
-		}
-		err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
-			Id:    id,
-			Type:  OperationTypeDeployExternalAssets,
-			Extra: extra,
-		}, nil)
-		if err != nil {
-			return err
-		}
-
-		return node.store.MarkExternalAssetDeployed(ctx, assets, tx.Signatures[0].String())
 	}
 	return nil
+}
+
+func (node *Node) deployExternalAsset(ctx context.Context, a *store.ExternalAsset) error {
+	id, tx, assets, err := node.CreateMintTransaction(ctx, a.AssetId)
+	if err != nil {
+		return err
+	}
+	if tx == nil {
+		return fmt.Errorf("missing mint transaction for %s", a.AssetId)
+	}
+	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
+	_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
+	if err != nil {
+		return err
+	}
+	rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, nil)
+	if err != nil {
+		return err
+	}
+	tx, err = rpcTx.Transaction.GetTransaction()
+	if err != nil {
+		return err
+	}
+	extra := []byte{byte(len(assets))}
+	for _, asset := range assets {
+		extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
+		extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
+	}
+	err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
+		Id: id, Type: OperationTypeDeployExternalAssets, Extra: extra,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	return node.store.MarkExternalAssetDeployed(ctx, assets, tx.Signatures[0].String())
 }
 
 func (node *Node) createNonceAccounts(ctx context.Context) error {

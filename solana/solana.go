@@ -404,7 +404,7 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	// Account funding must use current rent rather than the node's cached quote.
 	rent, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)
 	if err != nil {
-		panic(err)
+		return "", nil, nil, err
 	}
 	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent)
 	if err != nil {
