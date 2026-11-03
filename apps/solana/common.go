@@ -17,23 +17,29 @@ import (
 	"github.com/blocto/solana-go-sdk/types"
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 )
 
-var ErrTransactionTooLarge = errors.New("solana transaction too large")
+var (
+	ErrTransactionTooLarge = errors.New("solana transaction too large")
+	ErrInvalidV1Config     = errors.New("invalid solana v1 transaction config")
+)
 
 type transactionTooLargeError struct {
 	encodedSize int
+	encodedMax  int
+	rawMax      int
 }
 
 func (e *transactionTooLargeError) Error() string {
 	return fmt.Sprintf(
 		"base64 encoded solana_transaction::versioned::VersionedTransaction too large: %d bytes (max: encoded/raw %d/%d)",
 		e.encodedSize,
-		MaxTransactionEncodedSize,
-		MaxTransactionRawSize,
+		e.encodedMax,
+		e.rawMax,
 	)
 }
 
@@ -46,8 +52,10 @@ const (
 	MintSize          uint64 = 82
 	NormalAccountSize uint64 = 165
 
-	MaxTransactionRawSize     = 1232
-	MaxTransactionEncodedSize = 1644
+	MaxTransactionRawSize       = 1232
+	MaxTransactionEncodedSize   = 1644
+	MaxTransactionRawSizeV1     = solana.MaxTransactionSizeV1
+	MaxTransactionEncodedSizeV1 = (MaxTransactionRawSizeV1 + 2) / 3 * 4
 
 	maxNameLength   = 32
 	maxSymbolLength = 10
@@ -75,11 +83,70 @@ func ValidateTransactionSize(tx *solana.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("marshal solana transaction: %w", err)
 	}
-	if len(raw) <= MaxTransactionRawSize {
+	rawMax := MaxTransactionRawSize
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		rawMax = MaxTransactionRawSizeV1
+	}
+	if len(raw) <= rawMax {
 		return nil
 	}
 
-	return &transactionTooLargeError{encodedSize: base64.StdEncoding.EncodedLen(len(raw))}
+	return &transactionTooLargeError{
+		encodedSize: base64.StdEncoding.EncodedLen(len(raw)),
+		encodedMax:  base64.StdEncoding.EncodedLen(rawMax),
+		rawMax:      rawMax,
+	}
+}
+
+// ValidateTransaction checks the message structure, wire size, and resource
+// limits required by the v1 format. It deliberately does not require the
+// transaction's signatures because system-call transactions are validated
+// before all parties have signed them.
+func ValidateTransaction(tx *solana.Transaction) error {
+	err := tx.Message.Sanitize()
+	if err != nil {
+		return fmt.Errorf("sanitize solana transaction message: %w", err)
+	}
+	err = ValidateTransactionSize(tx)
+	if err != nil {
+		return err
+	}
+	if tx.Message.GetVersion() != solana.MessageVersionV1 {
+		return nil
+	}
+
+	config := tx.Message.TransactionConfig
+	if config.ComputeUnitLimit == nil || *config.ComputeUnitLimit == 0 {
+		return fmt.Errorf("%w: compute unit limit must be set", ErrInvalidV1Config)
+	}
+	if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
+		return fmt.Errorf("%w: loaded accounts data size limit must be set", ErrInvalidV1Config)
+	}
+	if *config.ComputeUnitLimit > maxComputeUnitLimit {
+		return fmt.Errorf("%w: compute unit limit exceeds %d", ErrInvalidV1Config, maxComputeUnitLimit)
+	}
+	if *config.LoadedAccountsDataSizeLimit > maxLoadedAccountsDataSizeLimit {
+		return fmt.Errorf("%w: loaded accounts data size limit exceeds %d", ErrInvalidV1Config, maxLoadedAccountsDataSizeLimit)
+	}
+	if config.PriorityFee != nil && *config.PriorityFee > maxPriorityFeeLamports {
+		return fmt.Errorf("%w: priority fee exceeds %d lamports", ErrInvalidV1Config, maxPriorityFeeLamports)
+	}
+	return nil
+}
+
+// ValidateWireTransaction additionally checks that a decoded or sendable
+// transaction has exactly the signature slots declared by its message header.
+// Zero-valued placeholder signatures remain valid for transactions awaiting
+// multi-party signing.
+func ValidateWireTransaction(tx *solana.Transaction) error {
+	if tx == nil {
+		return fmt.Errorf("nil solana transaction")
+	}
+	err := tx.Sanitize()
+	if err != nil {
+		return fmt.Errorf("sanitize solana wire transaction: %w", err)
+	}
+	return ValidateTransaction(tx)
 }
 
 type Metadata struct {
@@ -183,9 +250,11 @@ func (c *Client) buildInitialTxWithNonceAccount(ctx context.Context, payer solan
 		solana.SysVarRecentBlockHashesPubkey,
 		payer,
 	).Build())
-
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
-	b.AddInstruction(computerPriceIns)
+	if common.CheckTestEnvironment(ctx) {
+		// Historical replay fixtures predate v1 and included a zero-price
+		// ComputeBudget instruction immediately after the nonce advance.
+		b.AddInstruction(computebudget.NewSetComputeUnitPriceInstruction(0).Build())
+	}
 	return b
 }
 

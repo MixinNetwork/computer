@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
@@ -113,7 +114,11 @@ func validateConfirmCallStorage(storage []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid post call id: %v", err)
 	}
-	_, err = solana.TransactionFromBytes(storage[uuid.Size:])
+	tx, err := solana.TransactionFromBytes(storage[uuid.Size:])
+	if err != nil {
+		return fmt.Errorf("invalid post call transaction: %v", err)
+	}
+	err = solanaApp.ValidateWireTransaction(tx)
 	if err != nil {
 		return fmt.Errorf("invalid post call transaction: %v", err)
 	}
