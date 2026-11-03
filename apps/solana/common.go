@@ -140,6 +140,21 @@ type Transfer struct {
 	MayClosedWsolAta *solana.PublicKey
 }
 
+type InitialAssetMovementKind string
+
+const (
+	InitialAssetMovementTransfer InitialAssetMovementKind = "transfer"
+	InitialAssetMovementBurn     InitialAssetMovementKind = "burn"
+)
+
+type InitialAssetMovement struct {
+	Kind         InitialAssetMovementKind
+	TokenAddress string
+	Sender       string
+	Value        *big.Int
+	Decimal      uint8
+}
+
 type LookupTableStats struct {
 	Table string
 	Space uint
@@ -161,6 +176,59 @@ func FindAssociatedTokenAddress(
 		panic(err)
 	}
 	return addr
+}
+
+func ExtractInitialAssetMovements(tx *solana.Transaction) []*InitialAssetMovement {
+	var movements []*InitialAssetMovement
+	for _, ix := range tx.Message.Instructions {
+		programKey, err := tx.Message.Program(ix.ProgramIDIndex)
+		if err != nil {
+			panic(err)
+		}
+
+		accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			panic(err)
+		}
+
+		switch programKey {
+		case system.ProgramID:
+			transfer, ok := DecodeSystemTransfer(accounts, ix.Data)
+			if ok {
+				movements = append(movements, &InitialAssetMovement{
+					Kind:         InitialAssetMovementTransfer,
+					TokenAddress: SolanaEmptyAddress,
+					Sender:       transfer.GetFundingAccount().PublicKey.String(),
+					Value:        new(big.Int).SetUint64(*transfer.Lamports),
+					Decimal:      SolanaDecimal,
+				})
+			}
+		case solana.TokenProgramID, solana.Token2022ProgramID:
+			transfer, ok := DecodeTokenTransferChecked(accounts, ix.Data)
+			if ok {
+				movements = append(movements, &InitialAssetMovement{
+					Kind:         InitialAssetMovementTransfer,
+					TokenAddress: transfer.GetMintAccount().PublicKey.String(),
+					Sender:       transfer.GetOwnerAccount().PublicKey.String(),
+					Value:        new(big.Int).SetUint64(*transfer.Amount),
+					Decimal:      *transfer.Decimals,
+				})
+				continue
+			}
+
+			burn, ok := DecodeTokenBurn(accounts, ix.Data)
+			if ok {
+				movements = append(movements, &InitialAssetMovement{
+					Kind:         InitialAssetMovementBurn,
+					TokenAddress: burn.GetMintAccount().PublicKey.String(),
+					Sender:       burn.GetOwnerAccount().PublicKey.String(),
+					Value:        new(big.Int).SetUint64(*burn.Amount),
+					Decimal:      *burn.Decimals,
+				})
+			}
+		}
+	}
+	return movements
 }
 
 func BuildSignersGetter(keys ...solana.PrivateKey) func(key solana.PublicKey) *solana.PrivateKey {
