@@ -536,11 +536,11 @@ func (node *Node) releaseLockedNonceAccount(ctx context.Context, nonce *store.No
 }
 
 func (node *Node) handleFeeInfo(ctx context.Context) error {
-	xin, err := common.SafeReadAssetUntilSufficient(ctx, common.XINKernelAssetId)
+	xin, err := common.SafeReadAssetUntilSufficient(ctx, common.XINKernelAssetId, node.SafeUser())
 	if err != nil {
 		return err
 	}
-	sol, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId)
+	sol, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId, node.SafeUser())
 	if err != nil {
 		return err
 	}
@@ -558,7 +558,7 @@ func (node *Node) handleWithdrawalsFee(ctx context.Context) error {
 		if !tx.Destination.Valid {
 			panic(tx.TraceId)
 		}
-		asset, err := common.SafeReadAssetUntilSufficient(ctx, tx.AssetId)
+		asset, err := common.SafeReadAssetUntilSufficient(ctx, tx.AssetId, node.SafeUser())
 		if err != nil {
 			return err
 		}

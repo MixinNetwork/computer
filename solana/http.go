@@ -209,7 +209,7 @@ func (node *Node) httpDeployAssets(w http.ResponseWriter, r *http.Request, param
 			assets = append(assets, old)
 			continue
 		}
-		asset, err := common.SafeReadAssetUntilSufficient(ctx, id)
+		asset, err := common.SafeReadAssetUntilSufficient(ctx, id, node.SafeUser())
 		if err != nil {
 			common.RenderJSON(w, r, http.StatusBadRequest, map[string]any{"error": err})
 			return

@@ -361,7 +361,7 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	var da *solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
 		tid = common.UniqueId(tid, common.SafeLitecoinChainId)
-		ltc, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeLitecoinChainId)
+		ltc, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeLitecoinChainId, node.SafeUser())
 		if err != nil {
 			panic(err)
 		}
@@ -377,7 +377,7 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 			Asset:      ltc,
 		}
 	} else {
-		na, err := common.SafeReadAssetUntilSufficient(ctx, asset)
+		na, err := common.SafeReadAssetUntilSufficient(ctx, asset, node.SafeUser())
 		if err != nil {
 			return "", nil, nil, err
 		}

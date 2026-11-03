@@ -211,7 +211,7 @@ func VerifyAssetKey(assetKey string) error {
 	}
 	var k crypto.Key
 	copy(k[:], pub)
-	if !k.CheckKey() {
+	if !k.CheckPublicKey() {
 		return fmt.Errorf("invalid solana assetKey public key %s", assetKey)
 	}
 	addr := base58.Encode(pub)
