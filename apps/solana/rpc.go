@@ -97,10 +97,18 @@ type MintData struct {
 }
 
 func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error) {
+	return c.rpcGetAsset(ctx, address, rpc.CommitmentProcessed)
+}
+
+func (c *Client) RPCGetConfirmedAsset(ctx context.Context, address string) (*Asset, error) {
+	return c.rpcGetAsset(ctx, address, rpc.CommitmentConfirmed)
+}
+
+func (c *Client) rpcGetAsset(ctx context.Context, address string, commitment rpc.CommitmentType) (*Asset, error) {
 	for {
 		account, err := c.rpcClient.GetAccountInfoWithOpts(ctx, solana.MPK(address), &rpc.GetAccountInfoOpts{
 			Encoding:   "jsonParsed",
-			Commitment: rpc.CommitmentProcessed,
+			Commitment: commitment,
 		})
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
@@ -141,6 +149,60 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 			FreezeAuthority: freezeAuthority,
 		}
 		return asset, nil
+	}
+}
+
+// RPCGetMintCreationSignature recovers the actual creation transaction rather
+// than using a freshly constructed transaction's signature after a restart.
+func (c *Client) RPCGetMintCreationSignature(ctx context.Context, address string) (string, error) {
+	mint := solana.MustPublicKeyFromBase58(address)
+	opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentConfirmed}
+	for {
+		signatures, err := c.rpcClient.GetSignaturesForAddressWithOpts(ctx, mint, opts)
+		if err != nil {
+			return "", err
+		}
+		if len(signatures) == 0 {
+			return "", fmt.Errorf("mint creation transaction not found: %s", address)
+		}
+		for _, signature := range signatures {
+			if signature.Err != nil {
+				continue
+			}
+			result, err := c.RPCGetTransaction(ctx, signature.Signature.String())
+			if err != nil {
+				return "", err
+			}
+			if result == nil || result.Meta.Err != nil {
+				continue
+			}
+			tx, err := result.Transaction.GetTransaction()
+			if err != nil {
+				return "", err
+			}
+			if !tx.IsSigner(mint) {
+				continue
+			}
+			for _, ix := range tx.Message.Instructions {
+				program, err := tx.Message.Program(ix.ProgramIDIndex)
+				if err != nil || program != system.ProgramID {
+					continue
+				}
+				accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+				if err != nil {
+					return "", err
+				}
+				create, ok := DecodeCreateAccount(accounts, ix.Data)
+				if ok && create.GetNewAccount().PublicKey == mint && *create.Owner == solana.TokenProgramID && *create.Space == MintSize {
+					return signature.Signature.String(), nil
+				}
+			}
+		}
+		before := signatures[len(signatures)-1].Signature
+		if before == opts.Before {
+			return "", fmt.Errorf("mint transaction history did not advance: %s", address)
+		}
+		opts.Before = before
 	}
 }
 
@@ -217,7 +279,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 			time.Sleep(time.Millisecond * 300)
 			continue
 		}
-		if err != nil || r.Meta == nil {
+		if err != nil || r == nil || r.Meta == nil {
 			return nil, fmt.Errorf("solana.GetTransaction(%s) => %v", signature, err)
 		}
 
