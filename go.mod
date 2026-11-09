@@ -3,11 +3,11 @@ module github.com/MixinNetwork/computer
 go 1.27.3
 
 require (
-	github.com/MixinNetwork/bot-api-go-client/v3 v3.25.10
+	github.com/MixinNetwork/bot-api-go-client/v3 v3.26.1
 	github.com/MixinNetwork/imaging v1.0.0
 	github.com/MixinNetwork/mixin v0.19.11
 	github.com/MixinNetwork/multi-party-sig v0.7.0
-	github.com/MixinNetwork/safe v0.29.1
+	github.com/MixinNetwork/safe v0.29.2-0.20261109084722-23aeaa4b7842
 	github.com/blocto/solana-go-sdk v1.30.0
 	github.com/chai2010/webp v1.4.0
 	github.com/dimfeld/httptreemux/v5 v5.5.0
@@ -26,7 +26,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/MixinNetwork/go-number v0.2.0 // indirect
-	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20261102051857-a4d47079b45e // indirect
+	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20261104004426-a38b73404a2c // indirect
 	github.com/aead/siphash v1.0.1 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/bits-and-blooms/bitset v1.29.0 // indirect
@@ -69,11 +69,11 @@ require (
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/kkdai/bstream v1.0.0 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.1 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mattn/go-sqlite3 v1.14.52 // indirect
+	github.com/mattn/go-sqlite3 v1.14.53 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/mostynb/zstdpool-freelist v0.0.0-20201229113212-927304c0c3b1 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
