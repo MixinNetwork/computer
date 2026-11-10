@@ -126,7 +126,7 @@ func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string
 		return nil, &h, nil
 	}
 
-	asset, err := common.SafeReadAssetUntilSufficient(ctx, ver.Asset.String())
+	asset, err := common.SafeReadAssetUntilSufficient(ctx, ver.Asset.String(), node.SafeUser())
 	if err != nil {
 		panic(err)
 	}
@@ -283,7 +283,7 @@ func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.Syste
 	feeOnXIN := req.Amount.Sub(plan.OperationPriceAmount)
 	feeOnSol := feeOnXIN.Mul(ratio).RoundCeil(8).String()
 
-	asset, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId)
+	asset, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId, node.SafeUser())
 	if err != nil {
 		panic(err)
 	}

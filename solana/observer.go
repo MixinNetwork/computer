@@ -198,9 +198,8 @@ func (node *Node) deployOrConfirmAssetsLoop(ctx context.Context) {
 	for {
 		err := node.deployOrConfirmAssets(ctx)
 		if err != nil {
-			panic(err)
+			logger.Printf("node.deployOrConfirmAssets() => %v", err)
 		}
-
 		time.Sleep(loopInterval)
 	}
 }
@@ -354,6 +353,7 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 	}
 
 	for _, a := range es {
+		time.Sleep(time.Second)
 		old, err := node.store.ReadDeployedAsset(ctx, a.AssetId)
 		if err != nil {
 			return err
@@ -362,14 +362,41 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 			continue
 		}
 
-		id, tx, assets, err := node.CreateMintTransaction(ctx, a.AssetId)
-		if err != nil || tx == nil {
+		err = node.deployExternalAsset(ctx, a)
+		if err != nil {
+			logger.Printf("deploy external asset %s => %v", a.AssetId, err)
+			continue
+		}
+	}
+	return nil
+}
+
+func (node *Node) deployExternalAsset(ctx context.Context, a *store.ExternalAsset) error {
+	id, tx, asset, err := node.CreateMintTransaction(ctx, a.AssetId)
+	if err != nil {
+		return err
+	}
+	if tx == nil {
+		return fmt.Errorf("missing mint transaction for %s", a.AssetId)
+	}
+	mint, err := node.solana.RPCGetConfirmedAsset(ctx, asset.Address)
+	if err != nil {
+		return err
+	}
+	var hash string
+	if mint != nil {
+		if err := validateExternalAssetMint(asset.Address, node.getMTGAddress(ctx).String(), mint); err != nil {
 			return err
 		}
+		hash, err = node.solana.RPCGetMintCreationSignature(ctx, asset.Address)
+		if err != nil {
+			return err
+		}
+	} else {
 		payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
 		_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
 		if err != nil {
-			panic(err)
+			return err
 		}
 		rpcTx, err := node.SendTransactionUtilConfirm(ctx, tx, nil)
 		if err != nil {
@@ -379,24 +406,18 @@ func (node *Node) deployOrConfirmAssets(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-
-		extra := []byte{byte(len(assets))}
-		for _, asset := range assets {
-			extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
-			extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
-		}
-		err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
-			Id:    id,
-			Type:  OperationTypeDeployExternalAssets,
-			Extra: extra,
-		}, nil)
-		if err != nil {
-			return err
-		}
-
-		return node.store.MarkExternalAssetDeployed(ctx, assets, tx.Signatures[0].String())
+		hash = tx.Signatures[0].String()
 	}
-	return nil
+	extra := []byte{1}
+	extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
+	extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
+	err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
+		Id: id, Type: OperationTypeDeployExternalAssets, Extra: extra,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	return node.store.MarkExternalAssetDeployed(ctx, []*solanaApp.DeployedAsset{asset}, hash)
 }
 
 func (node *Node) createNonceAccounts(ctx context.Context) error {
@@ -488,6 +509,7 @@ func (node *Node) releaseNonceAccounts(ctx context.Context) error {
 				continue
 			}
 			err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
+			logger.Printf("store.UpdateNonceAccount(%s %s %s) => %v", nonce.Address, newNonceHash.String(), call.RequestId, err)
 			if err != nil {
 				panic(err)
 			}
@@ -514,11 +536,11 @@ func (node *Node) releaseLockedNonceAccount(ctx context.Context, nonce *store.No
 }
 
 func (node *Node) handleFeeInfo(ctx context.Context) error {
-	xin, err := common.SafeReadAssetUntilSufficient(ctx, common.XINKernelAssetId)
+	xin, err := common.SafeReadAssetUntilSufficient(ctx, common.XINKernelAssetId, node.SafeUser())
 	if err != nil {
 		return err
 	}
-	sol, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId)
+	sol, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeSolanaChainId, node.SafeUser())
 	if err != nil {
 		return err
 	}
@@ -536,7 +558,7 @@ func (node *Node) handleWithdrawalsFee(ctx context.Context) error {
 		if !tx.Destination.Valid {
 			panic(tx.TraceId)
 		}
-		asset, err := common.SafeReadAssetUntilSufficient(ctx, tx.AssetId)
+		asset, err := common.SafeReadAssetUntilSufficient(ctx, tx.AssetId, node.SafeUser())
 		if err != nil {
 			return err
 		}
