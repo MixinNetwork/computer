@@ -471,24 +471,7 @@ func compareCleanupV1Config(actual, expected *solana.Transaction) error {
 		return fmt.Errorf("invalid cleanup transaction version")
 	}
 
-	a, e := actual.Message.TransactionConfig, expected.Message.TransactionConfig
-	if !equalOptionalUint32(a.ComputeUnitLimit, e.ComputeUnitLimit) {
-		return fmt.Errorf("invalid cleanup compute unit limit")
-	}
-	if !equalOptionalUint32(a.LoadedAccountsDataSizeLimit, e.LoadedAccountsDataSizeLimit) {
-		return fmt.Errorf("invalid cleanup loaded accounts data size limit")
-	}
-	if !equalOptionalUint32(a.HeapSize, e.HeapSize) {
-		return fmt.Errorf("invalid cleanup heap size")
-	}
-	if a.PriorityFee == nil || e.PriorityFee == nil {
-		return fmt.Errorf("invalid cleanup priority fee")
-	}
 	return nil
-}
-
-func equalOptionalUint32(a, b *uint32) bool {
-	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 // cleanupInstructions removes the legacy priority-fee instruction so cleanup

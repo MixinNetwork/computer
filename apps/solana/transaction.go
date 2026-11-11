@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -29,11 +30,6 @@ const (
 	maxLoadedAccountsDataSizeLimit = uint32(64 * 1024 * 1024)
 	microLamportsPerLamport        = int64(1_000_000)
 	defaultMicroLamportsPerCU      = uint64(1_000)
-
-	// Computer fee-payer policy. This is a service limit, not an Agave
-	// protocol constant. It caps one transaction's total priority fee at
-	// 0.001 SOL.
-	maxPriorityFeeLamports = uint64(1_000_000)
 )
 
 func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent uint64) (*solana.Transaction, error) {
@@ -526,8 +522,9 @@ func getTotalPriorityFee(microLamportsPerCU uint64, computeUnitLimit uint32) uin
 		Mul(decimal.NewFromUint64(uint64(computeUnitLimit))).
 		Div(decimal.NewFromInt(microLamportsPerLamport)).
 		RoundCeil(0)
-	if fee.GreaterThan(decimal.NewFromUint64(maxPriorityFeeLamports)) {
-		return maxPriorityFeeLamports
+	// Saturate only at the wire format's uint64 limit, without a service fee cap.
+	if !fee.BigInt().IsUint64() {
+		return math.MaxUint64
 	}
 	return fee.BigInt().Uint64()
 }

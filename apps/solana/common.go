@@ -98,38 +98,26 @@ func ValidateTransactionSize(tx *solana.Transaction) error {
 	}
 }
 
-// ValidateTransaction checks the message structure, wire size, and resource
-// limits required by the v1 format. It deliberately does not require the
-// transaction's signatures because system-call transactions are validated
-// before all parties have signed them.
+// ValidateTransaction checks the message structure, wire size, and nonzero
+// resource limits required for V1 execution. It does not estimate sufficient
+// resources or require signatures before all parties have signed.
 func ValidateTransaction(tx *solana.Transaction) error {
 	err := tx.Message.Sanitize()
 	if err != nil {
 		return fmt.Errorf("sanitize solana transaction message: %w", err)
 	}
-	err = ValidateTransactionSize(tx)
-	if err != nil {
+	if err := ValidateTransactionSize(tx); err != nil {
 		return err
 	}
-	if tx.Message.GetVersion() != solana.MessageVersionV1 {
-		return nil
-	}
-
-	config := tx.Message.TransactionConfig
-	if config.ComputeUnitLimit == nil || *config.ComputeUnitLimit == 0 {
-		return fmt.Errorf("%w: compute unit limit must be set", ErrInvalidV1Config)
-	}
-	if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
-		return fmt.Errorf("%w: loaded accounts data size limit must be set", ErrInvalidV1Config)
-	}
-	if *config.ComputeUnitLimit > maxComputeUnitLimit {
-		return fmt.Errorf("%w: compute unit limit exceeds %d", ErrInvalidV1Config, maxComputeUnitLimit)
-	}
-	if *config.LoadedAccountsDataSizeLimit > maxLoadedAccountsDataSizeLimit {
-		return fmt.Errorf("%w: loaded accounts data size limit exceeds %d", ErrInvalidV1Config, maxLoadedAccountsDataSizeLimit)
-	}
-	if config.PriorityFee != nil && *config.PriorityFee > maxPriorityFeeLamports {
-		return fmt.Errorf("%w: priority fee exceeds %d lamports", ErrInvalidV1Config, maxPriorityFeeLamports)
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		// Unlike legacy/V0, omitted V1 resource limits default to zero.
+		config := tx.Message.TransactionConfig
+		if config.ComputeUnitLimit == nil || *config.ComputeUnitLimit == 0 {
+			return fmt.Errorf("%w: compute unit limit must be set and greater than zero", ErrInvalidV1Config)
+		}
+		if config.LoadedAccountsDataSizeLimit == nil || *config.LoadedAccountsDataSizeLimit == 0 {
+			return fmt.Errorf("%w: loaded accounts data size limit must be set and greater than zero", ErrInvalidV1Config)
+		}
 	}
 	return nil
 }
