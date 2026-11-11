@@ -119,9 +119,7 @@ func TestCreateV1(t *testing.T) {
 	}
 	rpcClient := solanaApp.NewClient(rpc)
 
-	// CreateMints simulates the CreateAccount instruction before returning the
-	// transaction. Use a fresh mint so the simulation cannot collide with an
-	// account created by an earlier test or manual run.
+	// Use a fresh mint for each transaction built by this test.
 	mint, err := solana.NewRandomPrivateKey()
 	require.NoError(err)
 	tx, err := rpcClient.CreateMints(

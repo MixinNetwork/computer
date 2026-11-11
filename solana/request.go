@@ -118,6 +118,9 @@ func validateConfirmCallStorage(storage []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid post call transaction: %v", err)
 	}
+	// Defensive validation: the observer builds and validates this transaction
+	// before attaching it, so a correctly functioning observer using compatible
+	// validation rules should already produce a valid wire transaction.
 	err = solanaApp.ValidateWireTransaction(tx)
 	if err != nil {
 		return fmt.Errorf("invalid post call transaction: %v", err)
