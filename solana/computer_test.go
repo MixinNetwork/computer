@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -21,6 +22,8 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/system"
+	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
 	"github.com/pelletier/go-toml"
 	"github.com/shopspring/decimal"
@@ -312,6 +315,7 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 	postId := common.UniqueId(confirmId, "post-process")
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
 	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
+	testCacheSOLConfirmation(ctx, require, nodes, failedSignature, node.getMTGAddress(ctx), 1_000_000_000, true)
 	confirmedPrepare := *prepare
 	confirmedPrepare.Hash = sql.NullString{Valid: true, String: failedSignature.String()}
 	postTx := node.CreateRefundWithdrawalTransaction(ctx, &confirmedPrepare, main, nonce)
@@ -320,6 +324,7 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 	require.Nil(err)
 
 	successSignature := solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb")
+	testCacheSOLConfirmation(ctx, require, nodes, successSignature, node.getMTGAddress(ctx), 1_000_000_000, false)
 	rejectedExtras := [][]byte{
 		// Prepare is never confirmed successfully without its Main call.
 		encodeConfirmCallRecords([]confirmCallRecord{{
@@ -496,6 +501,8 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
 		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
 	}
+	testCacheSOLConfirmation(ctx, require, nodes, signatures[0], node.getMTGAddress(ctx), 1_000_000_000, false)
+	testCacheSOLConfirmation(ctx, require, nodes, signatures[1], node.getUserSolanaPublicKeyFromCall(ctx, call), 1_000_000_000, false)
 	confirmedMain := *call
 	confirmedMain.Hash = sql.NullString{Valid: true, String: signatures[1].String()}
 	stx := node.CreatePostProcessTransaction(ctx, &confirmedMain, nonce, nil, nil)
@@ -543,6 +550,42 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 		require.Len(os, 1)
 	}
 	return postprocess
+}
+
+// The fixed confirmation signatures are test IDs (see
+// getTestSystemConfirmCallMessage), not transactions for the derived test user.
+// Supply matching local account metadata to every node, with no balance change
+// in the main call, so its referenced assets remain available for cleanup.
+func testCacheSOLConfirmation(ctx context.Context, require *require.Assertions, nodes []*Node, signature solana.Signature, source solana.PublicKey, balance uint64, failed bool) {
+	require.NotEmpty(getTestSystemConfirmCallMessage(signature.String()))
+	tx, err := solana.NewTransaction([]solana.Instruction{
+		system.NewTransferInstruction(0, source, source).Build(),
+	}, solana.Hash{}, solana.TransactionPayer(nodes[0].SolanaPayer()))
+	require.NoError(err)
+	tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
+	tx.Signatures[0] = signature
+	accounts, err := tx.AccountMetaList()
+	require.NoError(err)
+	meta := &rpc.TransactionMeta{
+		PreBalances: make([]uint64, len(accounts)), PostBalances: make([]uint64, len(accounts)),
+	}
+	for index, account := range accounts {
+		if account.PublicKey == source {
+			meta.PreBalances[index], meta.PostBalances[index] = balance, balance
+		}
+	}
+	if failed {
+		meta.Err = "test transaction failed"
+	}
+	raw, err := tx.MarshalBinary()
+	require.NoError(err)
+	result, err := json.Marshal(map[string]any{
+		"meta": meta, "transaction": []string{base64.StdEncoding.EncodeToString(raw), "base64"},
+	})
+	require.NoError(err)
+	for _, node := range nodes {
+		require.NoError(node.store.WriteCache(ctx, "getTransaction:"+signature.String(), hex.EncodeToString(result)))
+	}
 }
 
 func testConfirmWithdrawal(ctx context.Context, require *require.Assertions, nodes []*Node, call *store.SystemCall) {

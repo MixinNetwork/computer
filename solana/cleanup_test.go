@@ -157,3 +157,39 @@ func TestCleanupSOLBalanceSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1_000_000, balance)
 }
+
+func TestSOLConfirmationFixture(t *testing.T) {
+	ctx := context.Background()
+	require := require.New(t)
+	payer := solana.NewWallet()
+	source := solana.NewWallet().PublicKey()
+	var nodes []*Node
+	for i := 0; i < 2; i++ {
+		st, err := store.OpenSQLite3Store(filepath.Join(t.TempDir(), "confirmation.sqlite"))
+		require.NoError(err)
+		defer st.Close()
+		nodes = append(nodes, &Node{store: st, conf: &Configuration{SolanaKey: payer.PrivateKey.String()}})
+	}
+	for index, signature := range []solana.Signature{
+		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
+		solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg"),
+	} {
+		failed := index == 1
+		call := &store.SystemCall{Hash: sql.NullString{Valid: true, String: signature.String()}}
+		testCacheSOLConfirmation(ctx, require, nodes, signature, source, 1_000_000_000, failed)
+		for _, node := range nodes {
+			// No RPC client is configured: all nodes must use the same fixture.
+			result, err := node.RPCGetTransaction(ctx, signature.String())
+			require.NoError(err)
+			require.Equal(failed, result.Meta.Err != nil)
+			tx, err := result.Transaction.GetTransaction()
+			require.NoError(err)
+			require.Equal(signature, tx.Signatures[0])
+			balance, err := node.cleanupSOLBalance(ctx, call, nil, nil, source)
+			require.NoError(err)
+			require.EqualValues(1_000_000_000, balance)
+			changes := node.buildUserBalanceChangesFromMeta(ctx, tx, result.Meta, source)
+			require.True(changes[solanaApp.SolanaEmptyAddress].Amount.IsZero())
+		}
+	}
+}
