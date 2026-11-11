@@ -752,7 +752,10 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		}
 	}
 
-	actualTransfers, actualBurns := buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
+	actualTransfers, actualBurns, err := buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
+	if err != nil {
+		return err
+	}
 	var solBalance *uint64
 	if expectedTransfers[solanaApp.SolanaEmptyAddress] != nil || actualTransfers[solanaApp.SolanaEmptyAddress] != nil {
 		balance, err := node.cleanupSOLBalance(ctx, nil, utx, rpcTx.Meta, solana.MPK(user))
@@ -799,7 +802,10 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 		panic(err)
 	}
 
-	actualTransfers, actualBurns := buildInitialAssetMovementMaps(tx, user, "")
+	actualTransfers, actualBurns, err := buildInitialAssetMovementMaps(tx, user, "")
+	if err != nil {
+		return err
+	}
 	// Deposits are generated per receiver, while expectedChanges is keyed as
 	// receiver:mint. Filter to this user before splitting transfer and burn.
 	expectedTransfers, expectedBurns := node.collectExpectedDepositMovements(ctx, expectedChanges, user)
@@ -865,9 +871,10 @@ func addExpectedSystemCallMovement(m map[string]*ReferencedTxAsset, asset *Refer
 	m[asset.Address] = &copy
 }
 
-func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, excludeSender string) (map[string]*solanaApp.InitialAssetMovement, map[string]*solanaApp.InitialAssetMovement) {
+func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, excludeSender string) (map[string]*solanaApp.InitialAssetMovement, map[string]*solanaApp.InitialAssetMovement, error) {
 	transfers := make(map[string]*solanaApp.InitialAssetMovement)
 	burns := make(map[string]*solanaApp.InitialAssetMovement)
+	decimals := make(map[string]uint8)
 	for _, movement := range solanaApp.ExtractInitialAssetMovements(tx) {
 		if includeSender != "" && movement.Sender != includeSender {
 			continue
@@ -875,6 +882,12 @@ func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, exclud
 		if excludeSender != "" && movement.Sender == excludeSender {
 			continue
 		}
+		// A mint has one precision, even across transfer and burn instructions.
+		// Check before aggregation can discard subsequent instruction decimals.
+		if previous, ok := decimals[movement.TokenAddress]; ok && previous != movement.Decimal {
+			return nil, nil, fmt.Errorf("inconsistent movement decimals: %s %d %d", movement.TokenAddress, previous, movement.Decimal)
+		}
+		decimals[movement.TokenAddress] = movement.Decimal
 		target := transfers
 		if movement.Kind == solanaApp.InitialAssetMovementBurn {
 			target = burns
@@ -888,7 +901,7 @@ func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, exclud
 		}
 		old.Value = addBigInt(old.Value, movement.Value)
 	}
-	return transfers, burns
+	return transfers, burns, nil
 }
 
 func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaApp.InitialAssetMovementKind, expected map[string]*ReferencedTxAsset, actual map[string]*solanaApp.InitialAssetMovement, solBalance *uint64) error {
@@ -922,6 +935,11 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 		}
 	}
 	for address, movement := range actual {
+		asset := expected[address]
+		// Validate before dust/NFT exemptions use the instruction precision.
+		if asset != nil && int(movement.Decimal) != asset.Decimal {
+			return fmt.Errorf("invalid %s user balance change decimals: %s %d %d", kind, address, movement.Decimal, asset.Decimal)
+		}
 		if kind == solanaApp.InitialAssetMovementTransfer && address == solanaApp.SolanaEmptyAddress {
 			if solBalance == nil || !movement.Value.IsUint64() {
 				return fmt.Errorf("missing or invalid SOL cleanup balance")
@@ -933,7 +951,6 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 			if unsafe {
 				return fmt.Errorf("SOL cleanup leaves insufficient rent")
 			}
-			asset := expected[address]
 			if asset == nil || movement.Value.Cmp(asset.Amount.Shift(int32(asset.Decimal)).BigInt()) != 0 {
 				return fmt.Errorf("unexpected SOL cleanup amount: %s", movement.Value)
 			}
@@ -942,7 +959,6 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 		if node.shouldSkipPostProcessMovement(ctx, address, amount) {
 			continue
 		}
-		asset := expected[address]
 		if asset == nil {
 			return fmt.Errorf("unexpected %s user balance change: %s %s", kind, address, amount.String())
 		}

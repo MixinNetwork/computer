@@ -65,7 +65,8 @@ func TestPostProcessActualAmountsMatchSkippedExpectations(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, node.VerifySubSystemCallEnvelope(tx, user, true))
 					require.NoError(t, node.verifySubSystemCall(ctx, tx, entry, user, false))
-					transfers, burns := buildInitialAssetMovementMaps(tx, "", payer.PublicKey().String())
+					transfers, burns, err := buildInitialAssetMovementMaps(tx, "", payer.PublicKey().String())
+					require.NoError(t, err)
 					actual := transfers
 					if kind == solanaApp.InitialAssetMovementBurn {
 						actual = burns
@@ -120,5 +121,122 @@ func TestPostProcessAmountExemptions(t *testing.T) {
 			}
 			require.NoError(t, node.comparePostProcessMovements(ctx, kind, expectedNFT, actualNFT, nil))
 		})
+	}
+}
+
+func TestPostProcessMovementDecimals(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite3Store(filepath.Join(t.TempDir(), "decimals.sqlite"))
+	require.NoError(t, err)
+	defer st.Close()
+	node := &Node{store: st}
+	mint := solana.NewWallet().PublicKey().String()
+	require.NoError(t, st.WriteCache(ctx, "getAccount:"+mint, hex.EncodeToString([]byte(`{"value":{"data":["","base64"]}}`))))
+	for _, kind := range []solanaApp.InitialAssetMovementKind{solanaApp.InitialAssetMovementTransfer, solanaApp.InitialAssetMovementBurn} {
+		for _, test := range []struct {
+			name     string
+			expected string
+			decimals uint8
+			value    int64
+			wantErr  bool
+		}{
+			{name: "wrong decimals same raw amount", expected: "1", decimals: 9, value: 1_000_000, wantErr: true},
+			{name: "wrong decimals looks like dust", expected: "0", decimals: 18, value: 1_000_000, wantErr: true},
+			{name: "wrong decimals zero amount", expected: "0", decimals: 9, value: 0, wantErr: true},
+			{name: "correct decimals", expected: "1", decimals: 6, value: 1_000_000},
+			{name: "correct zero amount", expected: "0", decimals: 6, value: 0},
+		} {
+			t.Run(string(kind)+"/"+test.name, func(t *testing.T) {
+				expected := map[string]*ReferencedTxAsset{mint: {Decimal: 6, Amount: decimal.RequireFromString(test.expected)}}
+				actual := map[string]*solanaApp.InitialAssetMovement{
+					mint: {Kind: kind, TokenAddress: mint, Decimal: test.decimals, Value: big.NewInt(test.value)},
+				}
+				err := node.comparePostProcessMovements(ctx, kind, expected, actual, nil)
+				if test.wantErr {
+					require.ErrorContains(t, err, "decimals")
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
+}
+
+func TestInitialMovementDecimalsBeforeAggregation(t *testing.T) {
+	payer := solana.NewWallet().PublicKey()
+	user := solana.NewWallet().PublicKey()
+	entry := solana.NewWallet().PublicKey()
+	mint := solana.NewWallet().PublicKey()
+	type instruction struct {
+		burn      bool
+		decimals  uint8
+		amount    uint64
+		fromPayer bool
+	}
+	for _, program := range []solana.PublicKey{solana.TokenProgramID, solana.Token2022ProgramID} {
+		for _, test := range []struct {
+			name         string
+			instructions []instruction
+			includeUser  bool
+			excludePayer bool
+			wantErr      bool
+			wantAmount   int64
+		}{
+			{name: "consistent transfers", instructions: []instruction{{decimals: 6, amount: 1_000_000}, {decimals: 6, amount: 1_000_000}}, wantAmount: 2_000_000},
+			{name: "consistent burns", instructions: []instruction{{burn: true, decimals: 6, amount: 1_000_000}, {burn: true, decimals: 6, amount: 1_000_000}}, wantAmount: 2_000_000},
+			{name: "mixed transfer decimals", instructions: []instruction{{decimals: 6, amount: 500_000}, {decimals: 9, amount: 500_000}}, wantErr: true},
+			{name: "mixed burn decimals", instructions: []instruction{{burn: true, decimals: 6, amount: 500_000}, {burn: true, decimals: 9, amount: 500_000}}, wantErr: true},
+			{name: "wrong first instruction", instructions: []instruction{{decimals: 9, amount: 500_000}, {decimals: 6, amount: 500_000}}, wantErr: true},
+			{name: "wrong zero amount instruction", instructions: []instruction{{decimals: 6, amount: 1_000_000}, {decimals: 9, amount: 0}}, wantErr: true},
+			{name: "mixed transfer and burn decimals", instructions: []instruction{{decimals: 6, amount: 500_000}, {burn: true, decimals: 9, amount: 500_000}}, wantErr: true},
+			{name: "exclude payer before aggregation", instructions: []instruction{{decimals: 9, amount: 1_000_000, fromPayer: true}, {decimals: 6, amount: 1_000_000}}, excludePayer: true, wantAmount: 1_000_000},
+			{name: "include user before aggregation", instructions: []instruction{{decimals: 9, amount: 1_000_000, fromPayer: true}, {decimals: 6, amount: 1_000_000}}, includeUser: true, wantAmount: 1_000_000},
+		} {
+			t.Run(program.String()+"/"+test.name, func(t *testing.T) {
+				var instructions []solana.Instruction
+				for _, spec := range test.instructions {
+					sender := user
+					if spec.fromPayer {
+						sender = payer
+					}
+					source := solanaApp.FindAssociatedTokenAddress(sender, mint, program)
+					destination := solanaApp.FindAssociatedTokenAddress(entry, mint, program)
+					var ix solana.Instruction
+					if spec.burn {
+						ix = token.NewBurnCheckedInstruction(spec.amount, spec.decimals, source, mint, sender, nil).Build()
+					} else {
+						ix = token.NewTransferCheckedInstruction(spec.amount, spec.decimals, source, mint, destination, sender, nil).Build()
+					}
+					data, err := ix.Data()
+					require.NoError(t, err)
+					instructions = append(instructions, solana.NewInstruction(program, ix.Accounts(), data))
+				}
+				tx, err := solana.NewTransaction(instructions, solana.Hash{}, solana.TransactionPayer(payer))
+				require.NoError(t, err)
+				var include, exclude string
+				if test.includeUser {
+					include = user.String()
+				}
+				if test.excludePayer {
+					exclude = payer.String()
+				}
+				transfers, burns, err := buildInitialAssetMovementMaps(tx, include, exclude)
+				if test.wantErr {
+					require.ErrorContains(t, err, "inconsistent movement decimals")
+					require.Nil(t, transfers)
+					require.Nil(t, burns)
+					return
+				}
+				require.NoError(t, err)
+				total := new(big.Int)
+				for _, ledger := range []map[string]*solanaApp.InitialAssetMovement{transfers, burns} {
+					if movement := ledger[mint.String()]; movement != nil {
+						require.EqualValues(t, 6, movement.Decimal)
+						total.Add(total, movement.Value)
+					}
+				}
+				require.Equal(t, test.wantAmount, total.Int64())
+			})
+		}
 	}
 }
