@@ -942,8 +942,15 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 		if node.shouldSkipPostProcessMovement(ctx, address, amount) {
 			continue
 		}
-		if expected[address] == nil {
+		asset := expected[address]
+		if asset == nil {
 			return fmt.Errorf("unexpected %s user balance change: %s %s", kind, address, amount.String())
+		}
+		// A skipped expectation (including zero or negative) does not authorize
+		// an actual movement merely because its asset remains in the ledger.
+		expectedValue := asset.Amount.Shift(int32(asset.Decimal)).BigInt()
+		if movement.Value.Cmp(expectedValue) != 0 {
+			return fmt.Errorf("invalid %s user balance change: %s %s %s", kind, address, amount.String(), asset.Amount.String())
 		}
 	}
 	return nil
