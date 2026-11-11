@@ -153,6 +153,9 @@ func TestCreateIdempotent(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
 	rpc1 := testRpcEndpoint
+	if endpoint := os.Getenv("SOLANARPC"); endpoint != "" {
+		rpc1 = endpoint
+	}
 	c := solanaApp.NewClient(rpc1)
 
 	blockhash := solana.MustHashFromBase58("2fGgNDhkTwhBH1PqS6xpgmKSCSVdYUGuZBMCSQoAMRDt")
