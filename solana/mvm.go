@@ -1029,6 +1029,9 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	if err != nil || referenceCall == nil {
 		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", call.RequestId, referenceCall, err))
 	}
+	// Preserve the persisted state for reference lookup, but use the confirmed
+	// attempt's signature for deterministic cleanup balance checks.
+	referenceCall.Hash = call.Hash
 
 	var outputs []*store.UserOutput
 	var mix *bot.MixAddress

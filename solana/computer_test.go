@@ -311,12 +311,14 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 	confirmId := common.UniqueId(prepare.RequestId, "confirm-fail")
 	postId := common.UniqueId(confirmId, "post-process")
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
-	postTx := node.CreateRefundWithdrawalTransaction(ctx, prepare, main, nonce)
+	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
+	confirmedPrepare := *prepare
+	confirmedPrepare.Hash = sql.NullString{Valid: true, String: failedSignature.String()}
+	postTx := node.CreateRefundWithdrawalTransaction(ctx, &confirmedPrepare, main, nonce)
 	require.NotNil(postTx)
 	raw, err := postTx.MarshalBinary()
 	require.Nil(err)
 
-	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
 	successSignature := solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb")
 	rejectedExtras := [][]byte{
 		// Prepare is never confirmed successfully without its Main call.
@@ -490,16 +492,18 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 	cid := common.UniqueId(call.RequestId, "post-process")
 	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
 	require.Nil(err)
-	stx := node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
+	signatures := []solana.Signature{
+		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
+		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
+	}
+	confirmedMain := *call
+	confirmedMain.Hash = sql.NullString{Valid: true, String: signatures[1].String()}
+	stx := node.CreatePostProcessTransaction(ctx, &confirmedMain, nonce, nil, nil)
 	require.NotNil(stx)
 	raw, err := stx.MarshalBinary()
 	require.Nil(err)
 
 	id := uuid.Must(uuid.NewV4()).String()
-	signatures := []solana.Signature{
-		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
-		solana.MustSignatureFromBase58("42fwVqHYmfLqoqQ3XgELu72FL6t2Q2HCqY7XzkVCdVsWHGoT6DHBk7qzoUkpfjqs42ygSSnFWzarQZdpUX9tLK6r"),
-	}
 	prepareId := common.UniqueId(call.RequestId, "prepare")
 	extra := encodeConfirmCallRecords([]confirmCallRecord{
 		{Status: FlagConfirmCallSuccess, CallId: prepareId, Signature: signatures[0]},

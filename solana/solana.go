@@ -33,18 +33,63 @@ const (
 	SolanaTxRetry       = 10
 	SolanaMinimumHeight = 442271000
 
-	// SOL cleanup uses the historical 165-byte rent minimum as a fixed protocol
-	// dust threshold, not as a quote for current Solana rent. Observers and
-	// validators must make the same selection during replay and rent changes.
-	// Changing this value requires a coordinated protocol upgrade.
-	solanaCleanupDustLamports uint64 = 2_039_280
+	// Fixed cleanup policy shared by observers and validators during replay.
+	// Dust is the Mixin processing minimum; rent protects the source balance.
+	solanaCleanupDustLamports uint64 = 100_000
+	solanaCleanupRentLamports uint64 = 650_240
 )
 
 var errInvalidAddressLookup = errors.New("invalid address lookup")
 
 func isSOLCleanupDust(assetID string, lamports decimal.Decimal) bool {
 	return assetID == solanaApp.SolanaChainBase &&
-		lamports.Cmp(decimal.NewFromUint64(solanaCleanupDustLamports)) <= 0
+		lamports.Cmp(decimal.NewFromUint64(solanaCleanupDustLamports)) < 0
+}
+
+func isSOLCleanupRentUnsafe(balance, amount uint64) (bool, error) {
+	if amount > balance {
+		return false, fmt.Errorf("SOL cleanup exceeds balance: %d %d", amount, balance)
+	}
+	remaining := balance - amount
+	return remaining != 0 && remaining < solanaCleanupRentLamports, nil
+}
+
+// Use confirmed transaction metadata so replay never depends on a live balance.
+func (node *Node) cleanupSOLBalance(ctx context.Context, call *store.SystemCall, tx *solana.Transaction, meta *rpc.TransactionMeta, source solana.PublicKey) (uint64, error) {
+	if tx == nil || meta == nil {
+		if call == nil || !call.Hash.Valid || call.Hash.String == "" {
+			return 0, fmt.Errorf("missing confirmed cleanup transaction")
+		}
+		result, err := node.RPCGetTransaction(ctx, call.Hash.String)
+		if err != nil {
+			return 0, err
+		}
+		if result == nil || result.Meta == nil {
+			return 0, fmt.Errorf("missing cleanup transaction metadata: %s", call.Hash.String)
+		}
+		tx, err = result.Transaction.GetTransaction()
+		if err != nil {
+			return 0, err
+		}
+		meta = result.Meta
+	}
+	if err := node.processTransactionWithAddressLookups(ctx, tx); err != nil {
+		return 0, err
+	}
+	accounts, err := tx.AccountMetaList()
+	if err != nil {
+		return 0, err
+	}
+	for index, account := range accounts {
+		if account.PublicKey != source {
+			continue
+		}
+		if index >= len(meta.PostBalances) {
+			return 0, fmt.Errorf("missing cleanup source balance: %s", source)
+		}
+		return meta.PostBalances[index], nil
+	}
+	return 0, fmt.Errorf("cleanup source absent from confirmed transaction: %s", source)
 }
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
@@ -576,6 +621,20 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 			logger.Printf("skip SOL transfer in post-process: %v", asset)
 			continue
 		}
+		if asset.AssetId == solanaApp.SolanaChainBase {
+			balance, err := node.cleanupSOLBalance(ctx, call, tx, meta, user)
+			if err != nil {
+				panic(err)
+			}
+			unsafe, err := isSOLCleanupRentUnsafe(balance, amount.BigInt().Uint64())
+			if err != nil {
+				panic(err)
+			}
+			if unsafe {
+				logger.Printf("skip SOL cleanup leaving insufficient rent: %s", call.RequestId)
+				continue
+			}
+		}
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
 			AssetId:     asset.AssetId,
@@ -657,6 +716,20 @@ func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, c
 		if isSOLCleanupDust(asset.AssetId, amount) {
 			logger.Printf("skip SOL transfer in refund-withdrawal: %v", asset)
 			continue
+		}
+		if asset.AssetId == solanaApp.SolanaChainBase {
+			balance, err := node.cleanupSOLBalance(ctx, prepare, nil, nil, node.getMTGAddress(ctx))
+			if err != nil {
+				panic(err)
+			}
+			unsafe, err := isSOLCleanupRentUnsafe(balance, amount.BigInt().Uint64())
+			if err != nil {
+				panic(err)
+			}
+			if unsafe {
+				logger.Printf("skip SOL refund leaving insufficient rent: %s", prepare.RequestId)
+				continue
+			}
 		}
 		transfers = append(transfers, &solanaApp.TokenTransfer{
 			SolanaAsset: asset.Solana,
@@ -874,6 +947,10 @@ func buildBalanceMap(balances []rpc.TokenBalance, owner *solana.PublicKey) map[s
 }
 
 func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transaction, groupDepositEntry, user solana.PublicKey) error {
+	return node.verifySubSystemCall(ctx, tx, groupDepositEntry, user, true)
+}
+
+func (node *Node) verifySubSystemCall(ctx context.Context, tx *solana.Transaction, groupDepositEntry, user solana.PublicKey, allowMint bool) error {
 	for index, ix := range tx.Message.Instructions {
 		accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
 		if err != nil {
@@ -907,6 +984,9 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 			return fmt.Errorf("invalid system program instruction: %d", index)
 		case solana.TokenProgramID, solana.Token2022ProgramID:
 			if mint, ok := solanaApp.DecodeTokenMintTo(accounts, ix.Data); ok {
+				if !allowMint {
+					return fmt.Errorf("mint to is not allowed in post-process call")
+				}
 				to := mint.GetDestinationAccount().PublicKey
 				token := mint.GetMintAccount().PublicKey
 				ata := solanaApp.FindAssociatedTokenAddress(user, token, programKey)

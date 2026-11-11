@@ -350,8 +350,9 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	if err != nil {
 		return nil, err
 	}
-	err = node.VerifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress))
-	logger.Printf("node.VerifySubSystemCall(%s) => %v", user.ChainAddress, err)
+	// Cleanup must never mint, even when the mint destination is the user's ATA.
+	err = node.verifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress), false)
+	logger.Printf("node.verifySubSystemCall(%s) => %v", user.ChainAddress, err)
 	if err != nil {
 		return nil, err
 	}
@@ -752,13 +753,21 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 	}
 
 	actualTransfers, actualBurns := buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
+	var solBalance *uint64
+	if expectedTransfers[solanaApp.SolanaEmptyAddress] != nil || actualTransfers[solanaApp.SolanaEmptyAddress] != nil {
+		balance, err := node.cleanupSOLBalance(ctx, nil, utx, rpcTx.Meta, solana.MPK(user))
+		if err != nil {
+			return err
+		}
+		solBalance = &balance
+	}
 	// Compare each instruction class independently so one class cannot make up
 	// for a shortfall in the other.
-	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementTransfer, expectedTransfers, actualTransfers)
+	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementTransfer, expectedTransfers, actualTransfers, solBalance)
 	if err != nil {
 		return err
 	}
-	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementBurn, expectedBurns, actualBurns)
+	err = node.comparePostProcessMovements(ctx, solanaApp.InitialAssetMovementBurn, expectedBurns, actualBurns, nil)
 	if err != nil {
 		return err
 	}
@@ -882,7 +891,7 @@ func buildInitialAssetMovementMaps(tx *solana.Transaction, includeSender, exclud
 	return transfers, burns
 }
 
-func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaApp.InitialAssetMovementKind, expected map[string]*ReferencedTxAsset, actual map[string]*solanaApp.InitialAssetMovement) error {
+func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaApp.InitialAssetMovementKind, expected map[string]*ReferencedTxAsset, actual map[string]*solanaApp.InitialAssetMovement, solBalance *uint64) error {
 	for address, asset := range expected {
 		if node.shouldSkipPostProcessMovement(ctx, address, asset.Amount) {
 			continue
@@ -890,6 +899,21 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 		expectedValue := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal))).BigInt()
 		movement := actual[address]
 		if movement == nil {
+			if kind == solanaApp.InitialAssetMovementTransfer && address == solanaApp.SolanaEmptyAddress {
+				if isSOLCleanupDust(asset.AssetId, decimal.NewFromBigInt(expectedValue, 0)) {
+					continue
+				}
+				if solBalance == nil || !expectedValue.IsUint64() {
+					return fmt.Errorf("missing or invalid SOL cleanup balance")
+				}
+				unsafe, err := isSOLCleanupRentUnsafe(*solBalance, expectedValue.Uint64())
+				if err != nil {
+					return err
+				}
+				if unsafe {
+					continue
+				}
+			}
 			return fmt.Errorf("missing %s user balance change: %s", kind, address)
 		}
 		if movement.Value.Cmp(expectedValue) != 0 {
@@ -898,6 +922,22 @@ func (node *Node) comparePostProcessMovements(ctx context.Context, kind solanaAp
 		}
 	}
 	for address, movement := range actual {
+		if kind == solanaApp.InitialAssetMovementTransfer && address == solanaApp.SolanaEmptyAddress {
+			if solBalance == nil || !movement.Value.IsUint64() {
+				return fmt.Errorf("missing or invalid SOL cleanup balance")
+			}
+			unsafe, err := isSOLCleanupRentUnsafe(*solBalance, movement.Value.Uint64())
+			if err != nil {
+				return err
+			}
+			if unsafe {
+				return fmt.Errorf("SOL cleanup leaves insufficient rent")
+			}
+			asset := expected[address]
+			if asset == nil || movement.Value.Cmp(asset.Amount.Shift(int32(asset.Decimal)).BigInt()) != 0 {
+				return fmt.Errorf("unexpected SOL cleanup amount: %s", movement.Value)
+			}
+		}
 		amount := decimal.NewFromBigInt(movement.Value, -int32(movement.Decimal))
 		if node.shouldSkipPostProcessMovement(ctx, address, amount) {
 			continue
