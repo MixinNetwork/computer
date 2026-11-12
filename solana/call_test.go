@@ -23,6 +23,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUserSystemCallFeePayer(t *testing.T) {
+	ctx := context.Background()
+	payer := solana.NewWallet()
+	user, nonce, recipient := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	node := &Node{conf: &Configuration{SolanaKey: payer.PrivateKey.String()}}
+	for _, test := range []struct {
+		name     string
+		feePayer solana.PublicKey
+		wantErr  string
+	}{
+		{name: "node pays fees", feePayer: payer.PublicKey()},
+		{name: "user pays fees despite node signing", feePayer: user, wantErr: "invalid system call fee payer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tx, err := solana.NewTransaction([]solana.Instruction{
+				system.NewAdvanceNonceAccountInstruction(nonce, solana.SysVarRecentBlockHashesPubkey, payer.PublicKey()).Build(),
+				system.NewTransferInstruction(1, user, recipient).Build(),
+			}, solana.Hash{}, solana.TransactionPayer(test.feePayer))
+			require.NoError(t, err)
+			// Both transactions satisfy the previous signer-only check.
+			require.True(t, tx.IsSigner(payer.PublicKey()))
+			err = node.checkUserSystemCall(ctx, tx)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+	require.ErrorContains(t, node.checkUserSystemCall(ctx, new(solana.Transaction)), "invalid system call fee payer")
+}
+
 func TestSOLCleanupPolicy(t *testing.T) {
 	require.True(t, isSOLCleanupDust(solanaApp.SolanaChainBase, decimal.NewFromInt(99_999)))
 	require.False(t, isSOLCleanupDust(solanaApp.SolanaChainBase, decimal.NewFromInt(100_000)))

@@ -563,7 +563,11 @@ func (node *Node) checkUserSystemCall(ctx context.Context, tx *solana.Transactio
 		return nil
 	}
 
-	// ensure the transaction is signed by fee payer
+	// Require the node to pay Main's fees. Being a signer alone would allow
+	// fees to reduce the user's funded balance even when Main fails.
+	if len(tx.Message.AccountKeys) == 0 || tx.Message.AccountKeys[0] != node.SolanaPayer() {
+		return fmt.Errorf("invalid system call fee payer")
+	}
 	if !tx.IsSigner(node.SolanaPayer()) {
 		return fmt.Errorf("tx.IsSigner(payer) => %t", false)
 	}
