@@ -239,6 +239,18 @@ func (node *Node) validateSystemCallReferencedAssets(ctx context.Context, os []*
 	return nil
 }
 
+func validateSystemCallAssetAmounts(os []*store.UserOutput) error {
+	// Match Prepare's aggregation: individually small deposits may add up to a
+	// representable amount. External assets already use the deployed precision.
+	for _, asset := range aggregateSystemCallReferenceAssets(os) {
+		truncated := asset.Amount.Truncate(int32(asset.Decimal))
+		if truncated.IsZero() || !truncated.Equal(asset.Amount) {
+			return fmt.Errorf("unrepresentable system call asset amount: %s %s decimals=%d", asset.AssetId, asset.Amount, asset.Decimal)
+		}
+	}
+	return nil
+}
+
 func (node *Node) readSystemCallFeeInfo(ctx context.Context, req *store.Request) (*store.FeeInfo, error) {
 	extra := req.ExtraBytes()
 	switch len(extra) {

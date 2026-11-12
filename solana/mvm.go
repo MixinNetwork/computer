@@ -279,6 +279,14 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 		return node.failRequest(ctx, req, "")
 	}
 
+	// Validate the aggregated asset amounts before locking deposits or funding
+	// Prepare. Any precision loss rejects the call and refunds every reference.
+	err = validateSystemCallAssetAmounts(os)
+	if err != nil {
+		logger.Printf("validateSystemCallAssetAmounts(%s) => %v", call.RequestId, err)
+		return node.refundSystemCallDeposits(ctx, req, os, mix)
+	}
+
 	err = node.store.WriteInitialSystemCallWithRequest(ctx, req, call, os)
 	logger.Printf("solana.WriteInitialSystemCallWithRequest(%v %d) => %v", call, len(os), err)
 	if err != nil {
@@ -994,6 +1002,17 @@ func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compa
 		panic(err)
 	}
 	return nil, compaction
+}
+
+// Refund references rejected before a SystemCall is persisted. These outputs
+// are still Initial, unlike the Pending outputs of an already accepted call.
+func (node *Node) refundSystemCallDeposits(ctx context.Context, req *store.Request, os []*store.UserOutput, mix *bot.MixAddress) ([]*mtg.Transaction, string) {
+	txs, compaction := node.buildRefundTxs(ctx, req, req.Id, aggregateSystemCallReferenceAssets(os), mix.Members(), int(mix.Threshold))
+	err := node.store.RefundUserDepositsWithRequest(ctx, req, os, txs, compaction)
+	if err != nil {
+		panic(err)
+	}
+	return txs, compaction
 }
 
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {

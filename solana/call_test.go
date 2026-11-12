@@ -11,14 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
+	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
@@ -434,5 +437,136 @@ func TestPrepareCallAuthority(t *testing.T) {
 				require.NoError(t, node.comparePrepareCallWithSolanaTx(tx, []*ReferencedTxAsset{{Address: mint.String(), Decimal: 6, Amount: decimal.NewFromInt(1)}}, mtg, user, false))
 			})
 		}
+	}
+}
+
+func TestSystemCallAssetPrecision(t *testing.T) {
+	for _, test := range []struct {
+		name, chain string
+		precision   int
+		amounts     []string
+		wantErr     bool
+	}{
+		{name: "exact token unit", chain: solanaApp.SolanaChainBase, precision: 6, amounts: []string{"0.000001"}},
+		{name: "truncates to zero", chain: solanaApp.SolanaChainBase, precision: 6, amounts: []string{"0.00000001"}, wantErr: true},
+		{name: "positive amount loses remainder", chain: solanaApp.SolanaChainBase, precision: 6, amounts: []string{"1.00000001"}, wantErr: true},
+		{name: "aggregate before checking", chain: solanaApp.SolanaChainBase, precision: 6, amounts: []string{"0.00000050", "0.00000050"}},
+		{name: "aggregate still loses remainder", chain: solanaApp.SolanaChainBase, precision: 6, amounts: []string{"0.00000050", "0.00000049"}, wantErr: true},
+		{name: "SOL nine decimals", chain: solanaApp.SolanaChainBase, precision: 9, amounts: []string{"0.00000001"}},
+		{name: "whole unit mint rejects fraction", chain: solanaApp.SolanaChainBase, precision: 0, amounts: []string{"1.99"}, wantErr: true},
+		{name: "deployed uses eight decimals", chain: common.SafeEthereumChainId, precision: 18, amounts: []string{"0.00000001"}},
+		{name: "deployed ignores original lower precision", chain: common.SafeLitecoinChainId, precision: 2, amounts: []string{"1.12345678"}},
+		{name: "deployed rejects over eight decimals", chain: common.SafeEthereumChainId, precision: 18, amounts: []string{"1.000000001"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var outputs []*store.UserOutput
+			for _, amount := range test.amounts {
+				outputs = append(outputs, &store.UserOutput{AssetId: "asset", ChainId: test.chain, Amount: amount, Asset: bot.AssetNetwork{ChainID: test.chain, Precision: test.precision}})
+			}
+			err := validateSystemCallAssetAmounts(outputs)
+			if test.wantErr {
+				require.ErrorContains(t, err, "unrepresentable system call asset amount")
+			} else {
+				require.NoError(t, err)
+			}
+			for i, output := range outputs {
+				require.Equal(t, test.amounts[i], output.Amount)
+			}
+		})
+	}
+}
+
+func TestSystemCallPrecisionRefundsAllDeposits(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		amounts [2]string
+		refund  string
+	}{
+		{name: "zero units", amounts: [2]string{"0.00000001", "0.00000002"}, refund: "0.00000003"},
+		{name: "nonzero amount loses remainder", amounts: [2]string{"0.5", "0.50000001"}, refund: "1.00000001"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := common.EnableTestEnvironment(context.Background())
+			node, md := testBuildNode(ctx, require.New(t), t.TempDir(), 0)
+			defer node.store.Close()
+			defer md.Close()
+			mix := bot.NewUUIDMixAddress([]string{"a7376114-5db3-4822-bd3c-26416b57da1b"}, 1)
+			userID := store.StartUserId.String()
+			invalidID, validID := "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+			deposit := func(assetID, amount string, precision int) *store.UserOutput {
+				id := uuid.Must(uuid.NewV4()).String()
+				hash := crypto.Sha256Hash([]byte(id))
+				req := &store.Request{Id: id, MixinHash: hash, AssetId: assetID, Amount: decimal.RequireFromString(amount), Role: RequestRoleUser, Action: OperationTypeUserDeposit, State: common.RequestStateInitial, CreatedAt: time.Now().UTC(), Output: &mtg.Action{}}
+				req.Output.OutputId = id
+				require.NoError(t, node.store.WriteRequestIfNotExist(ctx, req))
+				output := &store.UserOutput{OutputId: id, UserId: userID, TransactionHash: hash.String(), AssetId: assetID, ChainId: solanaApp.SolanaChainBase, Amount: amount, State: common.RequestStateInitial, CreatedAt: req.CreatedAt, UpdatedAt: req.CreatedAt, Asset: bot.AssetNetwork{ChainID: solanaApp.SolanaChainBase, Precision: precision}}
+				require.NoError(t, node.store.WriteUserDepositWithRequest(ctx, req, output))
+				return output
+			}
+			outputs := []*store.UserOutput{deposit(invalidID, test.amounts[0], 6), deposit(invalidID, test.amounts[1], 6), deposit(validID, "1", 9)}
+			unreferenced := deposit(invalidID, "0.00000004", 6)
+			readOutput := func(output *store.UserOutput) *store.UserOutput {
+				os, err := node.store.ListUserOutputsByHashAndState(ctx, userID, output.TransactionHash, 0)
+				require.NoError(t, err)
+				require.Len(t, os, 1)
+				return os[0]
+			}
+			// Deposits preserve their full amounts, including below-unit fractions.
+			for _, output := range outputs {
+				require.Equal(t, output.Amount, readOutput(output).Amount)
+			}
+			require.Error(t, validateSystemCallAssetAmounts(outputs))
+			id := uuid.Must(uuid.NewV4()).String()
+			out := testBuildUserRequest(node, mix.String(), id, "", "0.0001", mtg.StorageAssetId, OperationTypeSystemCall, nil, nil, nil)
+			out.TestAttachActionToGroup(node.group)
+			req, err := node.parseRequest(out)
+			require.NoError(t, err)
+			require.NoError(t, node.store.WriteRequestIfNotExist(ctx, req))
+			// The first asset is funded, but the second is not: no partial refund or
+			// output consumption may escape while compaction is still required.
+			_, err = testWriteOutputForNodes(ctx, []*mtg.SQLite3Store{md}, node.conf.AppId, invalidID, "", "", 1, decimal.RequireFromString(test.refund))
+			require.NoError(t, err)
+			txs, compaction := node.refundSystemCallDeposits(ctx, req, outputs, mix)
+			require.Empty(t, txs)
+			require.Equal(t, validID, compaction)
+			for _, output := range outputs {
+				require.EqualValues(t, common.RequestStateInitial, readOutput(output).State)
+			}
+			ar, _, err := node.store.ReadActionResult(ctx, out.OutputId, req.Id)
+			require.NoError(t, err)
+			require.Equal(t, validID, ar.Compaction)
+			// Restore after compaction and refund both the invalid asset and valid SOL.
+			_, err = testWriteOutputForNodes(ctx, []*mtg.SQLite3Store{md}, node.conf.AppId, validID, "", "", 2, decimal.NewFromInt(1))
+			require.NoError(t, err)
+			require.NoError(t, node.store.ResetRequest(ctx, req.Id, req.Sequence))
+			out.TestAttachActionToGroup(node.group)
+			txs, compaction = node.refundSystemCallDeposits(ctx, req, outputs, mix)
+			require.Empty(t, compaction)
+			require.Len(t, txs, 2)
+			require.Equal(t, invalidID, txs[0].AssetId)
+			require.Equal(t, test.refund, txs[0].Amount)
+			require.Equal(t, validID, txs[1].AssetId)
+			require.Equal(t, "1", txs[1].Amount)
+			for _, tx := range txs {
+				require.Equal(t, []string{mtg.UniqueId(mix.Members()[0], mix.Members()[0])}, tx.Receivers)
+				require.Equal(t, int(mix.Threshold), tx.Threshold)
+			}
+			for _, output := range outputs {
+				saved := readOutput(output)
+				require.Equal(t, output.Amount, saved.Amount)
+					require.EqualValues(t, common.RequestStateFailed, saved.State)
+			}
+			require.EqualValues(t, common.RequestStateInitial, readOutput(unreferenced).State)
+			savedReq, err := node.store.ReadRequest(ctx, req.Id)
+			require.NoError(t, err)
+			require.EqualValues(t, common.RequestStateFailed, savedReq.State)
+			// Duplicate delivery returns cached transactions instead of refunding again.
+			replayed, compaction := node.processAction(ctx, out)
+			require.Empty(t, compaction)
+			require.Len(t, replayed, 2)
+			for i := range txs {
+				require.True(t, txs[i].Equal(replayed[i]))
+			}
+		})
 	}
 }
