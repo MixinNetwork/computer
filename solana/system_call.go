@@ -757,12 +757,34 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		return err
 	}
 	var solBalance *uint64
-	if expectedTransfers[solanaApp.SolanaEmptyAddress] != nil || actualTransfers[solanaApp.SolanaEmptyAddress] != nil {
-		balance, err := node.cleanupSOLBalance(ctx, nil, utx, rpcTx.Meta, solana.MPK(user))
+	expectedSOL := expectedTransfers[solanaApp.SolanaEmptyAddress]
+	// Any actual SOL transfer needs a balance/rent check, even below dust.
+	// When SOL is omitted, only a positive non-dust expectation needs a balance
+	// to decide whether omission is allowed. Dust-only expectations need no
+	// snapshot, so they cannot block an otherwise valid token cleanup.
+	needsSOLBalance := actualTransfers[solanaApp.SolanaEmptyAddress] != nil
+	if expectedSOL != nil && expectedSOL.Amount.IsPositive() {
+		needsSOLBalance = needsSOLBalance || !isSOLCleanupDust(expectedSOL.AssetId, expectedSOL.Amount.Shift(int32(expectedSOL.Decimal)))
+	}
+	if needsSOLBalance {
+		// Read Main's confirmed snapshot, not the cleanup transaction or a live
+		// account balance, so observers and validators agree during replay.
+		solBalance, err = node.cleanupSOLBalance(ctx, nil, utx, rpcTx.Meta, solana.MPK(user))
 		if err != nil {
+			// RPC/metadata errors must not be treated as permission to omit SOL.
 			return err
 		}
-		solBalance = &balance
+		if solBalance == nil {
+			// nil means Main omitted the user's account; a real zero balance is
+			// a non-nil pointer. The builder skips SOL in this case, so reject
+			// proposals that nevertheless include a SOL transfer.
+			if actualTransfers[solanaApp.SolanaEmptyAddress] != nil {
+				return fmt.Errorf("SOL cleanup source absent from Main")
+			}
+			// Match the builder by dropping only the in-memory SOL expectation.
+			// Token transfer and burn expectations still require comparison below.
+			delete(expectedTransfers, solanaApp.SolanaEmptyAddress)
+		}
 	}
 	// Compare each instruction class independently so one class cannot make up
 	// for a shortfall in the other.

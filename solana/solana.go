@@ -55,41 +55,42 @@ func isSOLCleanupRentUnsafe(balance, amount uint64) (bool, error) {
 }
 
 // Use confirmed transaction metadata so replay never depends on a live balance.
-func (node *Node) cleanupSOLBalance(ctx context.Context, call *store.SystemCall, tx *solana.Transaction, meta *rpc.TransactionMeta, source solana.PublicKey) (uint64, error) {
+// A nil balance means the source account is absent from the transaction.
+func (node *Node) cleanupSOLBalance(ctx context.Context, call *store.SystemCall, tx *solana.Transaction, meta *rpc.TransactionMeta, source solana.PublicKey) (*uint64, error) {
 	if tx == nil || meta == nil {
 		if call == nil || !call.Hash.Valid || call.Hash.String == "" {
-			return 0, fmt.Errorf("missing confirmed cleanup transaction")
+			return nil, fmt.Errorf("missing confirmed cleanup transaction")
 		}
 		result, err := node.RPCGetTransaction(ctx, call.Hash.String)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if result == nil || result.Meta == nil {
-			return 0, fmt.Errorf("missing cleanup transaction metadata: %s", call.Hash.String)
+			return nil, fmt.Errorf("missing cleanup transaction metadata: %s", call.Hash.String)
 		}
 		tx, err = result.Transaction.GetTransaction()
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		meta = result.Meta
 	}
 	if err := node.processTransactionWithAddressLookups(ctx, tx); err != nil {
-		return 0, err
+		return nil, err
 	}
 	accounts, err := tx.AccountMetaList()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	for index, account := range accounts {
 		if account.PublicKey != source {
 			continue
 		}
 		if index >= len(meta.PostBalances) {
-			return 0, fmt.Errorf("missing cleanup source balance: %s", source)
+			return nil, fmt.Errorf("missing cleanup source balance: %s", source)
 		}
-		return meta.PostBalances[index], nil
+		return &meta.PostBalances[index], nil
 	}
-	return 0, fmt.Errorf("cleanup source absent from confirmed transaction: %s", source)
+	return nil, nil
 }
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
@@ -606,45 +607,7 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		}
 	}
 
-	var transfers []*solanaApp.TokenTransfer
-	for _, asset := range assets {
-		dust := decimal.RequireFromString("0.00000001")
-		if asset.Amount.Cmp(dust) < 0 {
-			logger.Printf("skip referenced asset in post-process: %v", asset)
-			continue
-		}
-		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
-		if !amount.BigInt().IsUint64() {
-			continue
-		}
-		if isSOLCleanupDust(asset.AssetId, amount) {
-			logger.Printf("skip SOL transfer in post-process: %v", asset)
-			continue
-		}
-		if asset.AssetId == solanaApp.SolanaChainBase {
-			balance, err := node.cleanupSOLBalance(ctx, call, tx, meta, user)
-			if err != nil {
-				panic(err)
-			}
-			unsafe, err := isSOLCleanupRentUnsafe(balance, amount.BigInt().Uint64())
-			if err != nil {
-				panic(err)
-			}
-			if unsafe {
-				logger.Printf("skip SOL cleanup leaving insufficient rent: %s", call.RequestId)
-				continue
-			}
-		}
-		transfers = append(transfers, &solanaApp.TokenTransfer{
-			SolanaAsset: asset.Solana,
-			AssetId:     asset.AssetId,
-			ChainId:     asset.ChainId,
-			Mint:        solana.MustPublicKeyFromBase58(asset.Address),
-			Destination: solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry),
-			Amount:      amount.BigInt().Uint64(),
-			Decimals:    uint8(asset.Decimal),
-		})
-	}
+	transfers := node.buildPostProcessTransfers(ctx, call, tx, meta, user, assets)
 	if len(transfers) == 0 {
 		return nil
 	}
@@ -667,6 +630,55 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		panic(err)
 	}
 	return tx
+}
+
+// Select cleanup movements before constructing a transaction. Missing Main
+// source accounts suppress native SOL only; token cleanup is independent.
+func (node *Node) buildPostProcessTransfers(ctx context.Context, call *store.SystemCall, tx *solana.Transaction, meta *rpc.TransactionMeta, user solana.PublicKey, assets map[string]*ReferencedTxAsset) []*solanaApp.TokenTransfer {
+	var transfers []*solanaApp.TokenTransfer
+	for _, asset := range assets {
+		dust := decimal.RequireFromString("0.00000001")
+		if asset.Amount.Cmp(dust) < 0 {
+			logger.Printf("skip referenced asset in post-process: %v", asset)
+			continue
+		}
+		amount := asset.Amount.Mul(decimal.New(1, int32(asset.Decimal)))
+		if !amount.BigInt().IsUint64() {
+			continue
+		}
+		if isSOLCleanupDust(asset.AssetId, amount) {
+			logger.Printf("skip SOL transfer in post-process: %v", asset)
+			continue
+		}
+		if asset.AssetId == solanaApp.SolanaChainBase {
+			balance, err := node.cleanupSOLBalance(ctx, call, tx, meta, user)
+			if err != nil {
+				panic(err)
+			}
+			if balance == nil {
+				logger.Printf("skip SOL cleanup absent from Main: %s", call.RequestId)
+				continue
+			}
+			unsafe, err := isSOLCleanupRentUnsafe(*balance, amount.BigInt().Uint64())
+			if err != nil {
+				panic(err)
+			}
+			if unsafe {
+				logger.Printf("skip SOL cleanup leaving insufficient rent: %s", call.RequestId)
+				continue
+			}
+		}
+		transfers = append(transfers, &solanaApp.TokenTransfer{
+			SolanaAsset: asset.Solana,
+			AssetId:     asset.AssetId,
+			ChainId:     asset.ChainId,
+			Mint:        solana.MustPublicKeyFromBase58(asset.Address),
+			Destination: solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry),
+			Amount:      amount.BigInt().Uint64(),
+			Decimals:    uint8(asset.Decimal),
+		})
+	}
+	return transfers
 }
 
 func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount) *solana.Transaction {
@@ -722,7 +734,10 @@ func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, c
 			if err != nil {
 				panic(err)
 			}
-			unsafe, err := isSOLCleanupRentUnsafe(balance, amount.BigInt().Uint64())
+			if balance == nil {
+				panic(fmt.Errorf("missing refund source balance: %s", prepare.RequestId))
+			}
+			unsafe, err := isSOLCleanupRentUnsafe(*balance, amount.BigInt().Uint64())
 			if err != nil {
 				panic(err)
 			}
