@@ -19,6 +19,7 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
+	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -552,6 +553,44 @@ func (node *Node) buildSystemCallFromBytes(ctx context.Context, req *store.Reque
 		call.WithdrawalTraces = sql.NullString{Valid: true, String: ""}
 	}
 	return call, tx, nil
+}
+
+func verifySystemCallNonce(tx *solana.Transaction, nonceAccount string, nonceHash solana.Hash, authority solana.PublicKey) error {
+	if tx.Message.RecentBlockhash != nonceHash {
+		return fmt.Errorf("invalid system call nonce hash")
+	}
+	if len(tx.Message.Instructions) == 0 {
+		return fmt.Errorf("system call has no nonce advance")
+	}
+	ix := tx.Message.Instructions[0]
+	program, err := tx.Message.Program(ix.ProgramIDIndex)
+	if err != nil {
+		return err
+	}
+	if program != system.ProgramID {
+		return fmt.Errorf("invalid nonce advance program: %s", program)
+	}
+	accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+	if err != nil {
+		return err
+	}
+	if len(accounts) != 3 {
+		return fmt.Errorf("invalid nonce advance accounts: %d", len(accounts))
+	}
+	advance, err := solanaApp.DecodeNonceAdvance(accounts, ix.Data)
+	if err != nil {
+		return err
+	}
+	if advance.GetNonceAccount().PublicKey.String() != nonceAccount || !advance.GetNonceAccount().IsWritable {
+		return fmt.Errorf("invalid nonce account")
+	}
+	if advance.GetNonceAuthorityAccount().PublicKey != authority || !advance.GetNonceAuthorityAccount().IsSigner {
+		return fmt.Errorf("invalid nonce authority")
+	}
+	if advance.GetSysVarRecentBlockHashesPubkeyAccount().PublicKey != solana.SysVarRecentBlockHashesPubkey {
+		return fmt.Errorf("invalid nonce recent blockhashes sysvar")
+	}
+	return nil
 }
 
 func (node *Node) checkUserSystemCall(ctx context.Context, tx *solana.Transaction) error {

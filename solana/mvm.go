@@ -333,9 +333,27 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	}
 	switch flag {
 	case ConfirmFlagNonceAvailable:
+		// Available: call UUID, nonce hash, then the optional prepare call.
+		if len(extra) < uuid.Size+32 {
+			return node.failRequest(ctx, req, "")
+		}
+		nonceHash := solana.HashFromBytes(extra[uuid.Size : uuid.Size+32])
+		mainTx, err := solana.TransactionFromBase64(call.Raw)
+		if err != nil {
+			panic(err)
+		}
+		err = node.processTransactionWithAddressLookups(ctx, mainTx)
+		if err != nil {
+			panic(err)
+		}
+		err = verifySystemCallNonce(mainTx, call.NonceAccount, nonceHash, node.SolanaPayer())
+		logger.Printf("verifySystemCallNonce(%s) => %v", call.RequestId, err)
+		if err != nil {
+			return node.failRequest(ctx, req, "")
+		}
 		as := node.GetSystemCallRelatedAsset(ctx, os)
 		var sessions []*store.Session
-		prepare, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[16:])
+		prepare, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[uuid.Size+32:])
 		if err != nil {
 			return node.failRequest(ctx, req, "")
 		}

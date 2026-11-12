@@ -644,6 +644,8 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 		}
 
 		if failureReason == "" {
+			nonceHash := solana.MustHashFromBase58(nonce.Hash)
+			extra = append(extra, nonceHash[:]...)
 			err = node.OccupyNonceAccountByCall(ctx, nonce, call.RequestId)
 			if err != nil {
 				return err
