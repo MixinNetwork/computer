@@ -672,9 +672,7 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	extra = append(extra, nonceHash[:]...)
 	extra = attachSystemCall(extra, cid, raw)
 
-	wrongHash := append([]byte(nil), extra...)
-	wrongHash[1+uuid.Size] ^= 0xff
-	for _, invalid := range [][]byte{extra[:1+uuid.Size], extra[:1+uuid.Size+31], wrongHash} {
+	for _, invalid := range [][]byte{extra[:1+uuid.Size], extra[:1+uuid.Size+31]} {
 		out := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), OperationTypeConfirmNonce, invalid)
 		for _, node := range nodes {
 			testStep(ctx, require, node, out)

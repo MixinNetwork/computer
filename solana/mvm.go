@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -317,6 +318,9 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	switch call.State {
 	case common.RequestStateInitial:
 	case common.RequestStateFailed:
+		if !req.Restored {
+			return node.failRequest(ctx, req, "")
+		}
 		outputState = common.RequestStateDone
 	default:
 		return node.failRequest(ctx, req, "")
@@ -326,11 +330,21 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	if err != nil || user == nil {
 		panic(fmt.Errorf("store.ReadUser(%s) => %v %v", call.UserIdFromPublicPath(), user, err))
 	}
+	mix, err := bot.NewMixAddressFromString(user.MixAddress)
+	if err != nil {
+		panic(err)
+	}
 	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, byte(outputState))
 	logger.Printf("node.GetSystemCallReferenceTxs(%s) => %v %v", req.MixinHash.String(), os, err)
 	if err != nil {
 		panic(err)
 	}
+	// Insufficient refund funds trigger compaction after the call is marked Failed.
+	// On replay, only rebuild the refund; do not revalidate or execute the main call.
+	if call.State == common.RequestStateFailed {
+		return node.refundAndFailRequest(ctx, req, mix.Members(), int(mix.Threshold), call, os)
+	}
+
 	switch flag {
 	case ConfirmFlagNonceAvailable:
 		// Available: call UUID, nonce hash, then the optional prepare call.
@@ -344,12 +358,15 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 		}
 		err = node.processTransactionWithAddressLookups(ctx, mainTx)
 		if err != nil {
+			if errors.Is(err, errInvalidAddressLookup) {
+				return node.refundAndFailRequest(ctx, req, mix.Members(), int(mix.Threshold), call, os)
+			}
 			panic(err)
 		}
 		err = verifySystemCallNonce(mainTx, call.NonceAccount, nonceHash, node.SolanaPayer())
 		logger.Printf("verifySystemCallNonce(%s) => %v", call.RequestId, err)
 		if err != nil {
-			return node.failRequest(ctx, req, "")
+			return node.refundAndFailRequest(ctx, req, mix.Members(), int(mix.Threshold), call, os)
 		}
 		as := node.GetSystemCallRelatedAsset(ctx, os)
 		var sessions []*store.Session
@@ -441,10 +458,6 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 		}
 		return txs, ""
 	case ConfirmFlagNonceExpired:
-		mix, err := bot.NewMixAddressFromString(user.MixAddress)
-		if err != nil {
-			panic(err)
-		}
 		return node.refundAndFailRequest(ctx, req, mix.Members(), int(mix.Threshold), call, os)
 	default:
 		logger.Printf("invalid nonce confirm flag: %d", flag)
