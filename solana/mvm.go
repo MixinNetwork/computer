@@ -216,12 +216,12 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil || storage == nil {
 		return node.failRequest(ctx, req, "")
 	}
-	// External-asset deployments are MTG consensus state and can be checked
-	// deterministically before the call is persisted.
+	// Reject unsupported references before locking deposits. This includes
+	// deployed tokens returning as Solana assets; refund all references together.
 	err = node.validateSystemCallReferencedAssets(ctx, os)
 	if err != nil {
 		logger.Printf("node.validateSystemCallReferencedAssets(%s) => %v", req.Id, err)
-		return node.failRequest(ctx, req, "")
+		return node.refundSystemCallDeposits(ctx, req, os, mix)
 	}
 
 	cid := uuid.Must(uuid.FromBytes(data[8:24])).String()

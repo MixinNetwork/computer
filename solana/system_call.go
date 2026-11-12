@@ -224,10 +224,23 @@ func (node *Node) validateSystemCallParameters(ctx context.Context, req *store.R
 func (node *Node) validateSystemCallReferencedAssets(ctx context.Context, os []*store.UserOutput) error {
 	checked := make(map[string]bool)
 	for _, output := range os {
-		if output.ChainId == solanaApp.SolanaChainBase || checked[output.AssetId] {
+		if checked[output.AssetId] {
 			continue
 		}
 		checked[output.AssetId] = true
+		if output.ChainId == solanaApp.SolanaChainBase {
+			// Original BTC and its Solana representation have different Mixin
+			// asset IDs. Reject a returning deployed token by its mint address.
+			deployed, err := node.store.ReadDeployedAssetByAddress(ctx, output.Asset.AssetKey)
+			if err != nil {
+				panic(fmt.Errorf("store.ReadDeployedAssetByAddress(%s) => %v", output.Asset.AssetKey, err))
+			}
+			if deployed != nil {
+				return fmt.Errorf("deployed Solana mint is not allowed in system call deposits: %s %s", output.AssetId, deployed.Address)
+			}
+			continue
+		}
+		// Original external assets are supported once their mint is deployed.
 		deployed, err := node.store.ReadDeployedAsset(ctx, output.AssetId)
 		if err != nil {
 			panic(fmt.Errorf("store.ReadDeployedAsset(%s) => %v", output.AssetId, err))
