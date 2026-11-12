@@ -885,7 +885,7 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 	if err != nil {
 		panic(err)
 	}
-	if index >= 0 {
+	if tx.IsSigner(publicKey) && index >= 0 {
 		sig, err := base64.StdEncoding.DecodeString(call.Signature.String)
 		if err != nil {
 			panic(err)
