@@ -402,12 +402,12 @@ func (node *Node) InitializeAccount(ctx context.Context, account string) error {
 	return err
 }
 
-func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, []*solanaApp.DeployedAsset, error) {
+func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (string, *solana.Transaction, *solanaApp.DeployedAsset, error) {
 	tid := fmt.Sprintf("GROUP:%s:OBSERVER:%s:MEMBERS:%v:%d", node.group.GenesisId(), node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
-	var assets []*solanaApp.DeployedAsset
+	var da *solanaApp.DeployedAsset
 	if common.CheckTestEnvironment(ctx) {
 		tid = common.UniqueId(tid, common.SafeLitecoinChainId)
-		ltc, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeLitecoinChainId)
+		ltc, err := common.SafeReadAssetUntilSufficient(ctx, common.SafeLitecoinChainId, node.SafeUser())
 		if err != nil {
 			panic(err)
 		}
@@ -415,17 +415,15 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 		id = common.UniqueId(id, common.SafeLitecoinChainId)
 		seed := crypto.Sha256Hash(uuid.Must(uuid.FromString(id)).Bytes())
 		key := solanaApp.PrivateKeyFromSeed(seed[:])
-		assets = []*solanaApp.DeployedAsset{
-			{
-				AssetId:    ltc.AssetID,
-				Address:    "EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8",
-				Uri:        "https://uploads.mixin.one/mixin/attachments/1739005826-2dc1afa3f3327f4d29cbb02e3b41cf57d4842f3c444e8e829871699ac43d21b2",
-				PrivateKey: &key,
-				Asset:      ltc,
-			},
+		da = &solanaApp.DeployedAsset{
+			AssetId:    ltc.AssetID,
+			Address:    "EFShFtXaMF1n1f6k3oYRd81tufEXzUuxYM6vkKrChVs8",
+			Uri:        "https://uploads.mixin.one/mixin/attachments/1739005826-2dc1afa3f3327f4d29cbb02e3b41cf57d4842f3c444e8e829871699ac43d21b2",
+			PrivateKey: &key,
+			Asset:      ltc,
 		}
 	} else {
-		na, err := common.SafeReadAssetUntilSufficient(ctx, asset)
+		na, err := common.SafeReadAssetUntilSufficient(ctx, asset, node.SafeUser())
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -438,25 +436,25 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 		id = common.UniqueId(id, node.SafeUser().SpendPrivateKey)
 		seed := crypto.Sha256Hash([]byte(id))
 		key := solanaApp.PrivateKeyFromSeed(seed[:])
-		assets = append(assets, &solanaApp.DeployedAsset{
+		da = &solanaApp.DeployedAsset{
 			AssetId:    asset,
 			Address:    key.PublicKey().String(),
 			Uri:        uri,
 			Asset:      na,
 			PrivateKey: &key,
-		})
+		}
 	}
 
 	// Account funding must use current rent rather than the node's cached quote.
 	rent, err := node.solana.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.MintSize)
 	if err != nil {
-		panic(err)
+		return "", nil, nil, err
 	}
-	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), assets, rent)
+	tx, err := node.solana.CreateMints(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), []*solanaApp.DeployedAsset{da}, rent)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	return tid, tx, assets, nil
+	return tid, tx, da, nil
 }
 
 func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, string, error) {
@@ -552,6 +550,10 @@ func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.Syst
 }
 
 func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, tx *solana.Transaction, meta *rpc.TransactionMeta) *solana.Transaction {
+	return node.createPostProcessTransaction(ctx, call, nonce, tx, meta, nil)
+}
+
+func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, source *solana.Transaction, meta *rpc.TransactionMeta, comparison *solana.Transaction) *solana.Transaction {
 	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(call.State))
 	if err != nil {
 		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
@@ -568,8 +570,8 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 	}
 
 	user := node.getUserSolanaPublicKeyFromCall(ctx, call)
-	if tx != nil && meta != nil {
-		changes := node.buildUserBalanceChangesFromMeta(ctx, tx, meta, user)
+	if source != nil && meta != nil {
+		changes := node.buildUserBalanceChangesFromMeta(ctx, source, meta, user)
 		for address, change := range changes {
 			old := assets[address]
 			if old != nil {
@@ -607,7 +609,7 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		}
 	}
 
-	transfers := node.buildPostProcessTransfers(ctx, call, tx, meta, user, assets)
+	transfers := node.buildPostProcessTransfers(ctx, call, source, meta, user, assets)
 	if len(transfers) == 0 {
 		return nil
 	}
@@ -625,7 +627,18 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 		return nil
 	}
 
-	tx, err = node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	if comparison == nil {
+		tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+		if err != nil {
+			panic(err)
+		}
+		return tx
+	}
+	builder, err := node.solana.NewTransferOrBurnTokensBuilder(ctx, node.SolanaPayer(), user, nonce.Account(), transfers)
+	if err != nil {
+		panic(err)
+	}
+	tx, err := buildCleanupTransactionForComparison(builder, comparison)
 	if err != nil {
 		panic(err)
 	}
@@ -682,16 +695,60 @@ func (node *Node) buildPostProcessTransfers(ctx context.Context, call *store.Sys
 }
 
 func (node *Node) CreateRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount) *solana.Transaction {
+	return node.createRefundWithdrawalTransaction(ctx, prepare, call, nonce, nil)
+}
+
+func (node *Node) createRefundWithdrawalTransaction(ctx context.Context, prepare, call *store.SystemCall, nonce *store.NonceAccount, comparison *solana.Transaction) *solana.Transaction {
 	transfers := node.buildRefundWithdrawalTransfers(ctx, prepare, call)
 	if len(transfers) == 0 {
 		return nil
 	}
 
-	tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+	if comparison == nil {
+		tx, err := node.solana.TransferOrMintTokens(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+		if err != nil {
+			panic(err)
+		}
+		return tx
+	}
+	builder, err := node.solana.NewTransferOrMintTokensBuilder(ctx, node.SolanaPayer(), node.getMTGAddress(ctx), nonce.Account(), transfers, prepare.RequestId)
+	if err != nil {
+		panic(err)
+	}
+	tx, err := buildCleanupTransactionForComparison(builder, comparison)
 	if err != nil {
 		panic(err)
 	}
 	return tx
+}
+
+// buildCleanupTransactionForComparison compiles rebuilt cleanup instructions
+// with the version and inline v1 configuration already committed to by the
+// transaction under review. It intentionally performs no simulation or fee
+// lookup; those values can change between creation and verification.
+func buildCleanupTransactionForComparison(builder *solana.TransactionBuilder, comparison *solana.Transaction) (*solana.Transaction, error) {
+	if comparison == nil {
+		return nil, fmt.Errorf("nil cleanup comparison transaction")
+	}
+	switch version := comparison.Message.GetVersion(); version {
+	case solana.MessageVersionLegacy:
+		builder.SetVersion(solana.MessageVersionLegacy)
+	case solana.MessageVersionV0:
+		builder.SetVersion(solana.MessageVersionV0)
+	case solana.MessageVersionV1:
+		builder.SetTransactionConfig(comparison.Message.TransactionConfig)
+	default:
+		return nil, fmt.Errorf("unsupported cleanup transaction version: %d", version)
+	}
+
+	tx, err := builder.Build()
+	if err != nil {
+		return nil, fmt.Errorf("build cleanup comparison transaction: %w", err)
+	}
+	if err := solanaApp.ValidateTransaction(tx); err != nil {
+		return nil, err
+	}
+	return tx, nil
 }
 
 func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, call *store.SystemCall) []*solanaApp.TokenTransfer {

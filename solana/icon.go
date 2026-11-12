@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"mime"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
@@ -18,21 +21,57 @@ import (
 	"github.com/fogleman/gg"
 )
 
-const size = 512
+const (
+	size             = 512
+	maxIconBytes     = 5 << 20
+	maxIconDimension = 4096
+	maxIconPixels    = 4 << 20
+	imageHost        = "images.mixin.one"
+)
 
-func readImageFromUrl(url string) (*image.NRGBA, error) {
-	if url[len(url)-5:] == "=s128" {
-		url = url[:len(url)-5] + "=s512"
+func readImageFromUrl(ctx context.Context, url string) (*image.NRGBA, error) {
+	if strings.HasSuffix(url, "=s128") {
+		url = strings.TrimSuffix(url, "=s128") + "=s512"
 	}
-	res, err := http.Get(url)
-	if err != nil || res.StatusCode != 200 {
-		return nil, fmt.Errorf("http.Get(%s) => %v, %v", url, res, err)
-	}
-	defer res.Body.Close()
-
-	data, err := io.ReadAll(res.Body)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
+	}
+	if req.URL.Scheme != "https" || req.URL.Host != imageHost || req.URL.User != nil {
+		return nil, fmt.Errorf("icon URL must originate from https://images.mixin.one")
+	}
+	// RoundTrip performs one request without following redirects to another origin.
+	res, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("icon HTTP status: %d", res.StatusCode)
+	}
+	contentType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if err != nil || !strings.HasPrefix(contentType, "image/") {
+		return nil, fmt.Errorf("invalid icon content type: %q", res.Header.Get("Content-Type"))
+	}
+	if res.ContentLength > maxIconBytes {
+		return nil, fmt.Errorf("icon exceeds %d bytes", maxIconBytes)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(res.Body, maxIconBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxIconBytes {
+		return nil, fmt.Errorf("icon exceeds %d bytes", maxIconBytes)
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if config.Width <= 0 || config.Height <= 0 || config.Width > maxIconDimension || config.Height > maxIconDimension || config.Width > maxIconPixels/config.Height {
+		return nil, fmt.Errorf("invalid icon dimensions: %dx%d", config.Width, config.Height)
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -64,7 +103,7 @@ func getWebpBase64(img image.Image) (string, error) {
 }
 
 func (node *Node) processAssetIcon(ctx context.Context, asset *bot.AssetNetwork) (string, error) {
-	icon, err := readImageFromUrl(asset.IconURL)
+	icon, err := readImageFromUrl(ctx, asset.IconURL)
 	if err != nil {
 		return "", err
 	}

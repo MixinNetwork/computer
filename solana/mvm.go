@@ -117,7 +117,7 @@ func (node *Node) processUserDeposit(ctx context.Context, req *store.Request) ([
 		return node.failRequest(ctx, req, "")
 	}
 
-	asset, err := common.SafeReadAssetUntilSufficient(ctx, req.AssetId)
+	asset, err := common.SafeReadAssetUntilSufficient(ctx, req.AssetId, node.SafeUser())
 	if err != nil || asset == nil {
 		panic(err)
 	}
@@ -466,7 +466,7 @@ func (node *Node) processDeployExternalAssetsCall(ctx context.Context, req *stor
 		address := solana.PublicKeyFromBytes(extra[offset : offset+32]).String()
 		offset += 32
 
-		asset, err := common.SafeReadAssetUntilSufficient(ctx, assetId)
+		asset, err := common.SafeReadAssetUntilSufficient(ctx, assetId, node.SafeUser())
 		if err != nil {
 			panic(err)
 		}
@@ -894,7 +894,7 @@ func (node *Node) processDeposit(ctx context.Context, out *mtg.Action, restored 
 	if t == nil || t.AssetId != out.AssetId || t.Receiver != node.SolanaDepositEntry().String() {
 		return node.failDepositRequest(ctx, out, "", false)
 	}
-	asset, err := common.SafeReadAssetUntilSufficient(ctx, t.AssetId)
+	asset, err := common.SafeReadAssetUntilSufficient(ctx, t.AssetId, node.SafeUser())
 	if err != nil {
 		panic(err)
 	}

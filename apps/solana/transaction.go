@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/blocto/solana-go-sdk/program/address_lookup_table"
 	"github.com/gagliardetto/solana-go"
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/memo"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
@@ -20,7 +20,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const solanaInnerIndexBase = int64(1_000_000_000)
+const (
+	solanaInnerIndexBase = int64(1_000_000_000)
+
+	// Agave runtime limits and denomination constants:
+	// https://solana.com/docs/core/constants-reference
+	maxComputeUnitLimit = uint32(1_400_000)
+	// V1 defaults this limit to zero when omitted, so sets it explicitly.
+	maxLoadedAccountsDataSizeLimit = uint32(64 * 1024 * 1024)
+	microLamportsPerLamport        = int64(1_000_000)
+	defaultMicroLamportsPerCU      = uint64(1_000)
+)
 
 func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent uint64) (*solana.Transaction, error) {
 	payer, err := solana.PrivateKeyFromBase58(key)
@@ -32,41 +42,45 @@ func (c *Client) CreateNonceAccount(ctx context.Context, key, nonce string, rent
 		panic(err)
 	}
 
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
 		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	blockhash := block.Value.Blockhash
 
+	instructions := []solana.Instruction{
+		system.NewCreateAccountInstruction(
+			rent,
+			NonceAccountSize,
+			system.ProgramID,
+			payer.PublicKey(),
+			nonceKey.PublicKey(),
+		).Build(),
+		system.NewInitializeNonceAccountInstruction(
+			payer.PublicKey(),
+			nonceKey.PublicKey(),
+			solana.SysVarRecentBlockHashesPubkey,
+			solana.SysVarRentPubkey,
+		).Build(),
+	}
 	tx, err := solana.NewTransaction(
-		[]solana.Instruction{
-			system.NewCreateAccountInstruction(
-				rent,
-				NonceAccountSize,
-				system.ProgramID,
-				payer.PublicKey(),
-				nonceKey.PublicKey(),
-			).Build(),
-			system.NewInitializeNonceAccountInstruction(
-				payer.PublicKey(),
-				nonceKey.PublicKey(),
-				solana.SysVarRecentBlockHashesPubkey,
-				solana.SysVarRentPubkey,
-			).Build(),
-			computerPriceIns,
-		},
+		instructions,
 		blockhash,
 		solana.TransactionPayer(payer.PublicKey()),
+		solana.TransactionV1Config(defaultV1TransactionConfig()),
 	)
 	if err != nil {
 		panic(err)
+	}
+	err = c.configureV1Transaction(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
 	_, err = tx.Sign(BuildSignersGetter(nonceKey, payer))
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -79,33 +93,37 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*sola
 	if err != nil {
 		return nil, fmt.Errorf("soalan.GetMinimumBalanceForRentExemption(%d) => %v", NormalAccountSize, err)
 	}
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
 		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	blockhash := block.Value.Blockhash
 
+	instructions := []solana.Instruction{
+		system.NewTransferInstruction(
+			rentExemptBalance,
+			payer.PublicKey(),
+			solana.MPK(user),
+		).Build(),
+	}
 	tx, err := solana.NewTransaction(
-		[]solana.Instruction{
-			system.NewTransferInstruction(
-				rentExemptBalance,
-				payer.PublicKey(),
-				solana.MPK(user),
-			).Build(),
-			computerPriceIns,
-		},
+		instructions,
 		blockhash,
 		solana.TransactionPayer(payer.PublicKey()),
+		solana.TransactionV1Config(defaultV1TransactionConfig()),
 	)
 	if err != nil {
 		panic(err)
+	}
+	err = c.configureV1Transaction(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
 	_, err = tx.Sign(BuildSignersGetter(payer))
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -169,14 +187,15 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		)
 	}
 
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
-	builder.AddInstruction(computerPriceIns)
-
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
 		return nil, fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	builder.SetRecentBlockHash(block.Value.Blockhash)
+	err = c.configureV1TransactionBuilder(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
 
 	tx, err := builder.Build()
 	if err != nil {
@@ -195,7 +214,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 			panic(err)
 		}
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
@@ -205,16 +224,13 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 	payer := solana.MustPrivateKeyFromBase58(key)
 	pb := sc.PublicKeyFromString(payer.PublicKey().String())
 
-	computerPriceIns := c.getPriorityFeeInstruction(ctx)
 	block, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentProcessed)
 	if err != nil {
 		return nil, "", fmt.Errorf("solana.GetLatestBlockhash() => %v", err)
 	}
 	blockhash := block.Value.Blockhash
 
-	ins := []solana.Instruction{
-		computerPriceIns,
-	}
+	var ins []solana.Instruction
 	if table == "" {
 		instruction, t := BuildCreateAddressLookupTableInstruction(block, pb)
 		table = t
@@ -233,21 +249,51 @@ func (c *Client) ExtendLookupTables(ctx context.Context, key, table string, as [
 		ins,
 		blockhash,
 		solana.TransactionPayer(payer.PublicKey()),
+		solana.TransactionV1Config(defaultV1TransactionConfig()),
 	)
 	if err != nil {
 		panic(err)
+	}
+	err = c.configureV1Transaction(ctx, tx)
+	if err != nil {
+		return nil, "", err
 	}
 	_, err = tx.Sign(BuildSignersGetter(payer))
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, "", err
 	}
 	return tx, table, nil
 }
 
 func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.Transaction, error) {
+	builder, err := c.NewTransferOrMintTokensBuilder(ctx, payer, mtg, nonce, transfers, memoStr)
+	if err != nil {
+		return nil, err
+	}
+	err = c.configureV1TransactionBuilder(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := builder.Build()
+	if err != nil {
+		panic(err)
+	}
+	err = ValidateTransaction(tx)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// NewTransferOrMintTokensBuilder builds the durable-nonce and asset
+// instructions without selecting a transaction version or estimating its v1
+// resource configuration. Cleanup verification uses this to rebuild the
+// signed business instructions without consulting a current priority-fee quote.
+func (c *Client) NewTransferOrMintTokensBuilder(ctx context.Context, payer, mtg solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer, memoStr string) (*solana.TransactionBuilder, error) {
 	builder := c.buildInitialTxWithNonceAccount(ctx, payer, nonce)
 
 	for _, transfer := range transfers {
@@ -290,18 +336,33 @@ func (c *Client) TransferOrMintTokens(ctx context.Context, payer, mtg solana.Pub
 			).Build(),
 		)
 	}
+	return builder, nil
+}
+
+func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+	builder, err := c.NewTransferOrBurnTokensBuilder(ctx, payer, user, nonce, transfers)
+	if err != nil {
+		return nil, err
+	}
+	err = c.configureV1TransactionBuilder(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
 
 	tx, err := builder.Build()
 	if err != nil {
 		panic(err)
 	}
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateTransaction(tx); err != nil {
 		return nil, err
 	}
 	return tx, nil
 }
 
-func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.Transaction, error) {
+// NewTransferOrBurnTokensBuilder is the burn-side counterpart to
+// NewTransferOrMintTokensBuilder. It only builds the deterministic transaction
+// instructions; callers decide how the final transaction is configured.
+func (c *Client) NewTransferOrBurnTokensBuilder(ctx context.Context, payer, user solana.PublicKey, nonce NonceAccount, transfers []*TokenTransfer) (*solana.TransactionBuilder, error) {
 	builder := c.buildInitialTxWithNonceAccount(ctx, payer, nonce)
 
 	for _, transfer := range transfers {
@@ -326,15 +387,7 @@ func (c *Client) TransferOrBurnTokens(ctx context.Context, payer, user solana.Pu
 			).Build(),
 		)
 	}
-
-	tx, err := builder.Build()
-	if err != nil {
-		return nil, err
-	}
-	if err := ValidateTransactionSize(tx); err != nil {
-		return nil, err
-	}
-	return tx, nil
+	return builder, nil
 }
 
 func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder *solana.TransactionBuilder, transfer *TokenTransfer, payer, source solana.PublicKey) (*solana.TransactionBuilder, error) {
@@ -404,27 +457,93 @@ func (c *Client) AddTransferSolanaAssetInstruction(ctx context.Context, builder 
 	return builder, nil
 }
 
-func (c *Client) getPriorityFeeInstruction(ctx context.Context) *computebudget.Instruction {
-	if common.CheckTestEnvironment(ctx) {
-		return computebudget.NewSetComputeUnitPriceInstruction(0).Build()
-	}
-	recentFees, err := c.rpcClient.GetRecentPrioritizationFees(ctx, []solana.PublicKey{})
-	if err != nil {
-		panic(err)
-	}
-	fee := getAveragePriorityFee(recentFees)
-	return computebudget.NewSetComputeUnitPriceInstruction(fee).Build()
+// defaultV1TransactionConfig reserves bounded resources without simulating
+// against current account state. Prepares are built before their funding
+// withdrawals, and other transactions may execute against different state.
+// V1 requires explicit nonzero compute and loaded-account limits.
+func defaultV1TransactionConfig() solana.TransactionConfig {
+	return solana.TransactionConfig{}.
+		WithComputeUnitLimit(maxComputeUnitLimit).
+		WithLoadedAccountsDataSizeLimit(maxLoadedAccountsDataSizeLimit).
+		WithPriorityFee(0)
 }
 
-func getAveragePriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
+func (c *Client) getV1TransactionConfig(ctx context.Context, tx *solana.Transaction) (solana.TransactionConfig, error) {
+	config := defaultV1TransactionConfig()
+	if common.CheckTestEnvironment(ctx) {
+		return config, nil
+	}
+
+	writableAccounts, err := tx.Message.Writable()
+	if err != nil {
+		return solana.TransactionConfig{}, fmt.Errorf("solana.Message.Writable() => %w", err)
+	}
+	recentFees, err := c.RPCGetRecentPrioritizationFees(ctx, writableAccounts)
+	if err != nil {
+		return solana.TransactionConfig{}, fmt.Errorf("solana.GetRecentPrioritizationFees() => %w", err)
+	}
+	microLamportsPerCU := getMedianPriorityFee(recentFees)
+	priorityFee := getTotalPriorityFee(microLamportsPerCU, maxComputeUnitLimit)
+
+	return config.WithPriorityFee(priorityFee), nil
+}
+
+func (c *Client) configureV1Transaction(ctx context.Context, tx *solana.Transaction) error {
+	config, err := c.getV1TransactionConfig(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tx.Message.TransactionConfig = config
+	return nil
+}
+
+func (c *Client) configureV1TransactionBuilder(ctx context.Context, builder *solana.TransactionBuilder) error {
+	// Computer's offline replay tests compare transactions with historical
+	// legacy messages and synthetic nonce state. Preserve those message bytes.
+	if common.CheckTestEnvironment(ctx) {
+		return nil
+	}
+
+	builder.SetTransactionConfig(defaultV1TransactionConfig())
+	preview, err := builder.Build()
+	if err != nil {
+		return err
+	}
+	config, err := c.getV1TransactionConfig(ctx, preview)
+	if err != nil {
+		return err
+	}
+	builder.SetTransactionConfig(config)
+	return nil
+}
+
+func getTotalPriorityFee(microLamportsPerCU uint64, computeUnitLimit uint32) uint64 {
+	fee := decimal.NewFromUint64(microLamportsPerCU).
+		Mul(decimal.NewFromUint64(uint64(computeUnitLimit))).
+		Div(decimal.NewFromInt(microLamportsPerLamport)).
+		RoundCeil(0)
+	// Saturate only at the wire format's uint64 limit, without a service fee cap.
+	if !fee.BigInt().IsUint64() {
+		return math.MaxUint64
+	}
+	return fee.BigInt().Uint64()
+}
+
+func getMedianPriorityFee(recentFees []rpc.PriorizationFeeResult) uint64 {
 	if len(recentFees) == 0 {
-		return 1000
+		return defaultMicroLamportsPerCU
 	}
-	total := decimal.NewFromInt(0)
-	for _, fee := range recentFees {
-		total = total.Add(decimal.NewFromUint64(fee.PrioritizationFee))
+	fees := make([]uint64, len(recentFees))
+	for i, fee := range recentFees {
+		fees[i] = fee.PrioritizationFee
 	}
-	return total.Div(decimal.NewFromInt(int64(len(recentFees)))).BigInt().Uint64()
+	slices.Sort(fees)
+	middle := len(fees) / 2
+	if len(fees)%2 == 1 {
+		return fees[middle]
+	}
+	lower, upper := fees[middle-1], fees[middle]
+	return lower + (upper-lower)/2
 }
 
 func ExtractTransfersFromTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, exception *solana.PublicKey) ([]*Transfer, error) {

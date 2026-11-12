@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
@@ -898,7 +899,7 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 		},
 	})
 	require.Nil(err)
-	id, _, assets, err := node.CreateMintTransaction(ctx, common.SafeLitecoinChainId)
+	id, _, asset, err := node.CreateMintTransaction(ctx, common.SafeLitecoinChainId)
 	require.Nil(err)
 	as, err := node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)
@@ -917,18 +918,16 @@ func testObserverDeployAsset(ctx context.Context, require *require.Assertions, n
 	require.Equal("90", as[0].PriceUSD)
 
 	var extra []byte
-	extra = append(extra, byte(len(assets)))
-	for _, asset := range assets {
-		extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
-		extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
-	}
+	extra = append(extra, byte(1))
+	extra = append(extra, uuid.Must(uuid.FromString(asset.AssetId)).Bytes()...)
+	extra = append(extra, solana.MustPublicKeyFromBase58(asset.Address).Bytes()...)
 
 	out := testBuildObserverRequest(node, id, OperationTypeDeployExternalAssets, extra)
 	for _, node := range nodes {
 		testStep(ctx, require, node, out)
 	}
 
-	err = node.store.MarkExternalAssetDeployed(ctx, assets, "MBsH9LRbrx4u3kMkFkGuDyxjj3Pio55Puwv66dtR2M3CDfaR7Ef7VEKHDGM7GhB3fE1Jzc7k3zEZ6hvJ399UBNi")
+	err = node.store.MarkExternalAssetDeployed(ctx, []*solanaApp.DeployedAsset{asset}, "MBsH9LRbrx4u3kMkFkGuDyxjj3Pio55Puwv66dtR2M3CDfaR7Ef7VEKHDGM7GhB3fE1Jzc7k3zEZ6hvJ399UBNi")
 	require.Nil(err)
 	as, err = node.store.ListUndeployedAssets(ctx)
 	require.Nil(err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	"github.com/MixinNetwork/computer/config"
 	computer "github.com/MixinNetwork/computer/solana"
 	"github.com/MixinNetwork/safe/common"
@@ -23,6 +24,7 @@ func ComputerBootCmd(c *cli.Context) error {
 	resty := mixin.GetRestyClient()
 	resty.SetTimeout(time.Second * 30)
 	resty.SetHeader("User-Agent", ua)
+	bot.SetUserAgent(ua)
 
 	mc, err := config.ReadConfiguration(c.String("config"), "computer")
 	if err != nil {

@@ -119,14 +119,16 @@ func TestCreateV1(t *testing.T) {
 	}
 	rpcClient := solanaApp.NewClient(rpc)
 
-	mint := solana.MustPrivateKeyFromBase58("bH2GaiFeQVbPKitvweDD9ae8i2peb6QohWZTxBRJKP37siCsWte8HAd9uvbP7dqsL25HUWSDuFKfnPjAyydTnJC")
+	// Use a fresh mint for each transaction built by this test.
+	mint, err := solana.NewRandomPrivateKey()
+	require.NoError(err)
 	tx, err := rpcClient.CreateMints(
 		ctx,
 		solana.MPK("5ECPyQVa9gZuig8guSmofttMfYjCMRxqa6nCciFTrsTB"),
 		solana.MPK("5v1eqBfJQkX4JYCi43v7eApXERTNakRBJX1d6Ax6KRzK"),
 		[]*solanaApp.DeployedAsset{
 			{
-				Address: "AnF3RoYAxAETRPAddDWtMET5wL83uzEmbUjkHE93zsHS",
+				Address: mint.PublicKey().String(),
 				Uri:     "https://kernel.mixin.dev/objects/9cfd190f6d87070dac3db4209f4f1db8925a59f668e2befd7b8f4c43927526e6",
 				Asset: &bot.AssetNetwork{
 					Name:   "amituofo2",

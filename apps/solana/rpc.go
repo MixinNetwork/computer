@@ -28,6 +28,8 @@ type Client struct {
 	rpcEndpoint string
 }
 
+const recentPrioritizationFeeMaxAttempts = 3
+
 type AssetMetadata struct {
 	Symbol      string `json:"symbol"`
 	Name        string `json:"name"`
@@ -57,6 +59,24 @@ func (c *Client) RPCGetConfirmedHeight(ctx context.Context) (uint64, error) {
 		}
 		return block.Context.Slot, nil
 	}
+}
+
+func (c *Client) RPCGetRecentPrioritizationFees(ctx context.Context, accounts solana.PublicKeySlice) ([]rpc.PriorizationFeeResult, error) {
+	for attempt := 1; attempt <= recentPrioritizationFeeMaxAttempts; attempt++ {
+		fees, err := c.rpcClient.GetRecentPrioritizationFees(ctx, accounts)
+		if err == nil {
+			return fees, nil
+		}
+		if attempt == recentPrioritizationFeeMaxAttempts || !mtg.CheckRetryableError(err) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	panic("unreachable")
 }
 
 func (c *Client) RPCGetBlockByHeight(ctx context.Context, height uint64) (*rpc.GetBlockResult, error) {
@@ -97,10 +117,18 @@ type MintData struct {
 }
 
 func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error) {
+	return c.rpcGetAsset(ctx, address, rpc.CommitmentProcessed)
+}
+
+func (c *Client) RPCGetConfirmedAsset(ctx context.Context, address string) (*Asset, error) {
+	return c.rpcGetAsset(ctx, address, rpc.CommitmentConfirmed)
+}
+
+func (c *Client) rpcGetAsset(ctx context.Context, address string, commitment rpc.CommitmentType) (*Asset, error) {
 	for {
 		account, err := c.rpcClient.GetAccountInfoWithOpts(ctx, solana.MPK(address), &rpc.GetAccountInfoOpts{
 			Encoding:   "jsonParsed",
-			Commitment: rpc.CommitmentProcessed,
+			Commitment: commitment,
 		})
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
@@ -144,6 +172,60 @@ func (c *Client) RPCGetAsset(ctx context.Context, address string) (*Asset, error
 	}
 }
 
+// RPCGetMintCreationSignature recovers the actual creation transaction rather
+// than using a freshly constructed transaction's signature after a restart.
+func (c *Client) RPCGetMintCreationSignature(ctx context.Context, address string) (string, error) {
+	mint := solana.MustPublicKeyFromBase58(address)
+	opts := &rpc.GetSignaturesForAddressOpts{Commitment: rpc.CommitmentConfirmed}
+	for {
+		signatures, err := c.rpcClient.GetSignaturesForAddressWithOpts(ctx, mint, opts)
+		if err != nil {
+			return "", err
+		}
+		if len(signatures) == 0 {
+			return "", fmt.Errorf("mint creation transaction not found: %s", address)
+		}
+		for _, signature := range signatures {
+			if signature.Err != nil {
+				continue
+			}
+			result, err := c.RPCGetTransaction(ctx, signature.Signature.String())
+			if err != nil {
+				return "", err
+			}
+			if result == nil || result.Meta.Err != nil {
+				continue
+			}
+			tx, err := result.Transaction.GetTransaction()
+			if err != nil {
+				return "", err
+			}
+			if !tx.IsSigner(mint) {
+				continue
+			}
+			for _, ix := range tx.Message.Instructions {
+				program, err := tx.Message.Program(ix.ProgramIDIndex)
+				if err != nil || program != system.ProgramID {
+					continue
+				}
+				accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+				if err != nil {
+					return "", err
+				}
+				create, ok := DecodeCreateAccount(accounts, ix.Data)
+				if ok && create.GetNewAccount().PublicKey == mint && *create.Owner == solana.TokenProgramID && *create.Space == MintSize {
+					return signature.Signature.String(), nil
+				}
+			}
+		}
+		before := signatures[len(signatures)-1].Signature
+		if before == opts.Before {
+			return "", fmt.Errorf("mint transaction history did not advance: %s", address)
+		}
+		opts.Before = before
+	}
+}
+
 func (c *Client) RPCGetBalance(ctx context.Context, account solana.PublicKey) (uint64, error) {
 	for {
 		result, err := c.rpcClient.GetBalance(ctx, account, rpc.CommitmentProcessed)
@@ -159,9 +241,13 @@ func (c *Client) RPCGetBalance(ctx context.Context, account solana.PublicKey) (u
 }
 
 func (c *Client) RPCGetAccount(ctx context.Context, account solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
+	return c.rpcGetAccount(ctx, account, rpc.CommitmentProcessed)
+}
+
+func (c *Client) rpcGetAccount(ctx context.Context, account solana.PublicKey, commitment rpc.CommitmentType) (*rpc.GetAccountInfoResult, error) {
 	for {
 		result, err := c.rpcClient.GetAccountInfoWithOpts(ctx, account, &rpc.GetAccountInfoOpts{
-			Commitment: rpc.CommitmentProcessed,
+			Commitment: commitment,
 		})
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
@@ -196,7 +282,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 		r, err := c.rpcClient.GetTransaction(ctx,
 			solana.MustSignatureFromBase58(signature),
 			&rpc.GetTransactionOpts{
-				Encoding:                       solana.EncodingBase58,
+				Encoding:                       solana.EncodingBase64,
 				MaxSupportedTransactionVersion: &rpc.MaxSupportedTransactionVersion1,
 				Commitment:                     rpc.CommitmentConfirmed, // getTransaction requires this min level
 			},
@@ -213,7 +299,7 @@ func (c *Client) RPCGetTransaction(ctx context.Context, signature string) (*rpc.
 			time.Sleep(time.Millisecond * 300)
 			continue
 		}
-		if err != nil || r.Meta == nil {
+		if err != nil || r == nil || r.Meta == nil {
 			return nil, fmt.Errorf("solana.GetTransaction(%s) => %v", signature, err)
 		}
 
@@ -262,7 +348,7 @@ func (c *Client) RPCGetTokenAccountsByOwner(ctx context.Context, owner solana.Pu
 }
 
 func (c *Client) GetNonceAccountHash(ctx context.Context, nonce solana.PublicKey) (*solana.Hash, error) {
-	account, err := c.RPCGetAccount(ctx, nonce)
+	account, err := c.rpcGetAccount(ctx, nonce, rpc.CommitmentFinalized)
 	if err != nil {
 		return nil, fmt.Errorf("solana.GetAccountInfo() => %v", err)
 	}
@@ -295,10 +381,11 @@ func (c *Client) GetMint(ctx context.Context, mint solana.PublicKey) (*token.Min
 }
 
 func (c *Client) SendTransaction(ctx context.Context, tx *solana.Transaction) (string, error) {
-	if err := ValidateTransactionSize(tx); err != nil {
+	if err := ValidateWireTransaction(tx); err != nil {
 		return "", err
 	}
 	sig, err := c.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
+		Encoding:            solana.EncodingBase64,
 		SkipPreflight:       true,
 		PreflightCommitment: rpc.CommitmentProcessed,
 	})

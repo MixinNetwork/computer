@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
+	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/logger"
@@ -113,7 +114,14 @@ func validateConfirmCallStorage(storage []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid post call id: %v", err)
 	}
-	_, err = solana.TransactionFromBytes(storage[uuid.Size:])
+	tx, err := solana.TransactionFromBytes(storage[uuid.Size:])
+	if err != nil {
+		return fmt.Errorf("invalid post call transaction: %v", err)
+	}
+	// Defensive validation: the observer builds and validates this transaction
+	// before attaching it, so a correctly functioning observer using compatible
+	// validation rules should already produce a valid wire transaction.
+	err = solanaApp.ValidateWireTransaction(tx)
 	if err != nil {
 		return fmt.Errorf("invalid post call transaction: %v", err)
 	}
@@ -207,7 +215,7 @@ func (node *Node) parseSignerResponse(out *mtg.Action) (*store.Request, error) {
 func (node *Node) parseUserRequest(out *mtg.Action) (*store.Request, error) {
 	a, m := mtg.DecodeMixinExtraHEX(out.Extra)
 	if a != node.conf.AppId {
-		panic(out.Extra)
+		return nil, fmt.Errorf("invalid user app id: %s", a)
 	}
 	if len(m) == 0 {
 		return nil, fmt.Errorf("node.parseUserRequest(%v)", out)
