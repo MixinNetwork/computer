@@ -161,7 +161,7 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 		}
 		symbol := asset.Asset.Symbol
 		if len(symbol) > maxSymbolLength {
-			name = name[:maxSymbolLength]
+			symbol = symbol[:maxSymbolLength]
 		}
 		builder.AddInstruction(
 			CustomInstruction{
