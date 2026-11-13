@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
-	"github.com/MixinNetwork/mixin/crypto"
 	"github.com/MixinNetwork/mixin/util/base58"
 	"github.com/MixinNetwork/safe/apps/ethereum"
 	"github.com/MixinNetwork/safe/common"
@@ -334,11 +333,8 @@ func VerifyAssetKey(assetKey string) error {
 	if len(pub) != 32 {
 		return fmt.Errorf("invalid solana assetKey length %s", assetKey)
 	}
-	var k crypto.Key
-	copy(k[:], pub)
-	if !k.CheckPublicKey() {
-		return fmt.Errorf("invalid solana assetKey public key %s", assetKey)
-	}
+	// Mint addresses identify accounts, not signing keys. WSOL and PDA mints
+	// are valid even when their addresses are not Ed25519 public keys.
 	addr := base58.Encode(pub)
 	if addr != assetKey {
 		return fmt.Errorf("invalid solana assetKey %s", assetKey)

@@ -46,14 +46,22 @@ func TestRPCGetAssetLive(t *testing.T) {
 			require.NoError(t, err)
 			require.Nil(t, asset)
 
-			const existingMint = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" // USDT on mainnet.
-			asset, err = test.getAsset(ctx, existingMint)
-			require.NoError(t, err)
-			require.NotNil(t, asset)
-			require.Equal(t, existingMint, asset.Address)
-			require.Equal(t, solana.TokenProgramID.String(), asset.ProgramId)
-			require.EqualValues(t, 6, asset.Decimals)
-			require.True(t, asset.IsInitialized)
+			for _, mint := range []struct {
+				address  string
+				decimals uint32
+			}{
+				{"Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6}, // USDT on mainnet.
+				{WrappedSolanaAddress, SolanaDecimal},
+			} {
+				asset, err = test.getAsset(ctx, mint.address)
+				require.NoError(t, err)
+				require.NotNil(t, asset)
+				require.Equal(t, mint.address, asset.Address)
+				require.Equal(t, GenerateAssetId(mint.address), asset.Id)
+				require.Equal(t, solana.TokenProgramID.String(), asset.ProgramId)
+				require.Equal(t, mint.decimals, asset.Decimals)
+				require.True(t, asset.IsInitialized)
+			}
 		})
 	}
 }
