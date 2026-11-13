@@ -713,7 +713,22 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	id = uuid.Must(uuid.NewV4()).String()
 	extra = []byte{ConfirmFlagNonceAvailable}
 	extra = append(extra, uuid.Must(uuid.FromString(c.RequestId)).Bytes()...)
+	mainNonce, err := node.store.ReadNonceAccount(ctx, c.NonceAccount)
+	require.Nil(err)
+	nonceHash := solana.MustHashFromBase58(mainNonce.Hash)
+	extra = append(extra, nonceHash[:]...)
 	extra = attachSystemCall(extra, cid, raw)
+
+	for _, invalid := range [][]byte{extra[:1+uuid.Size], extra[:1+uuid.Size+31]} {
+		out := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), OperationTypeConfirmNonce, invalid)
+		for _, node := range nodes {
+			testStep(ctx, require, node, out)
+			call, err := node.store.ReadSystemCallByRequestId(ctx, c.RequestId, common.RequestStateInitial)
+			require.Nil(err)
+			require.NotNil(call)
+			require.False(call.WithdrawalTraces.Valid)
+		}
+	}
 
 	out = testBuildObserverRequest(node, id, OperationTypeConfirmNonce, extra)
 	for _, node := range nodes {
