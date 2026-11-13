@@ -207,30 +207,44 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 			panic(err)
 		}
 
-		var wg sync.WaitGroup
-		for range batch {
-			ckpt := checkpoint + 1
-			if ckpt+SolanaBlockDelay > int64(height)+1 {
-				break
-			}
-			wg.Add(1)
-			checkpoint = ckpt
-			go func(current int64) {
-				defer wg.Done()
-				err := node.solanaReadBlock(ctx, current, rentExemptBalance)
-				logger.Printf("node.solanaReadBlock(%d) => %v", current, err)
-				if err != nil {
-					panic(err)
-				}
-			}(ckpt)
+		last := min(checkpoint+batch, int64(height)+1-SolanaBlockDelay)
+		err = node.solanaReadBlocks(ctx, checkpoint, last, rentExemptBalance)
+		if errors.Is(err, store.ErrNoSpareNonceAccount) {
+			logger.Printf("deposit scanner waiting for a spare nonce at block %d", checkpoint+1)
+			continue
 		}
-		wg.Wait()
-
-		err = node.writeBlockCheckpoint(ctx, checkpoint)
 		if err != nil {
 			panic(err)
 		}
 	}
+}
+
+// A partial batch keeps its old checkpoint. Completed blocks are cached by
+// solanaReadBlock, so retries resume the unfinished work without skipping it.
+func (node *Node) solanaReadBlocks(ctx context.Context, checkpoint, last int64, rentExemptBalance uint64) error {
+	errs := make([]error, last-checkpoint)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Go(func() {
+			current := checkpoint + int64(i) + 1
+			errs[i] = node.solanaReadBlock(ctx, current, rentExemptBalance)
+			logger.Printf("node.solanaReadBlock(%d) => %v", current, errs[i])
+		})
+	}
+	wg.Wait()
+
+	var retryErr error
+	for _, err := range errs {
+		if errors.Is(err, store.ErrNoSpareNonceAccount) {
+			retryErr = err
+		} else if err != nil {
+			return err
+		}
+	}
+	if retryErr != nil {
+		return retryErr
+	}
+	return node.writeBlockCheckpoint(ctx, last)
 }
 
 func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
@@ -363,10 +377,16 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, ts []*solanaApp.TokenTransfer) error {
 	id := common.UniqueId(depositHash.String(), user)
 	cid := common.UniqueId(id, "deposit")
+	// An earlier attempt may have submitted this user's deposit before the
+	// block ran out of nonces. Do not reserve another nonce once the call exists.
+	call, err := node.store.ReadSystemCallByRequestId(ctx, cid, 0)
+	if err != nil || call != nil {
+		return err
+	}
 	extra := solana.MustPublicKeyFromBase58(user).Bytes()
 	extra = append(extra, depositHash[:]...)
 
-	ts, err := node.checkTransfers(ctx, ts)
+	ts, err = node.checkTransfers(ctx, ts)
 	if err != nil {
 		panic(err)
 	}
@@ -374,12 +394,11 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 		return nil
 	}
 
-	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
-	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
+	nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
 	if err != nil {
 		return err
 	}
-	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
 	if err != nil {
 		return err
 	}
@@ -1025,7 +1044,7 @@ func (node *Node) VerifySubSystemCall(ctx context.Context, tx *solana.Transactio
 	return node.verifySubSystemCall(ctx, tx, groupDepositEntry, user, true)
 }
 
-func (node *Node) verifySubSystemCall(ctx context.Context, tx *solana.Transaction, groupDepositEntry, user solana.PublicKey, allowMint bool) error {
+func (node *Node) verifySubSystemCall(_ context.Context, tx *solana.Transaction, groupDepositEntry, user solana.PublicKey, allowMint bool) error {
 	for index, ix := range tx.Message.Instructions {
 		accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
 		if err != nil {

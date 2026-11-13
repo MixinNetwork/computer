@@ -314,7 +314,8 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 
 	confirmId := common.UniqueId(prepare.RequestId, "confirm-fail")
 	postId := common.UniqueId(confirmId, "post-process")
-	nonce := node.ReadSpareNonceAccountWithCall(ctx, postId)
+	nonce, err := node.store.ReserveNonceAccountForCall(ctx, postId)
+	require.NoError(err)
 	failedSignature := solana.MustSignatureFromBase58("sKxPceKjZb4PiywqwMP3Wyf9YoPqdgZZ5MLNxkpRv7qgTXVxK8UQRGkjMT47qJht5muuUPpqynkrM5C6BcYSELg")
 	testCacheSOLConfirmation(ctx, require, nodes, failedSignature, node.getMTGAddress(ctx), 1_000_000_000, true)
 	confirmedPrepare := *prepare

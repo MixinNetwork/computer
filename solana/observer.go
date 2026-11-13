@@ -263,7 +263,9 @@ func (node *Node) unconfirmedWithdrawalLoop(ctx context.Context) {
 func (node *Node) unconfirmedCallLoop(ctx context.Context) {
 	for {
 		err := node.handleUnconfirmedCalls(ctx)
-		if err != nil {
+		if errors.Is(err, store.ErrNoSpareNonceAccount) {
+			logger.Printf("prepare calls waiting for a spare nonce")
+		} else if err != nil {
 			panic(err)
 		}
 
@@ -656,7 +658,10 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 				return err
 			}
 			cid := common.UniqueId(id, "storage")
-			prepareNonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+			prepareNonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
+			if err != nil {
+				return err
+			}
 			prepareTx, err := node.CreatePrepareTransaction(ctx, call, prepareNonce, fee)
 			if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
 				failureReason = err.Error()
@@ -665,15 +670,13 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 
 			if prepareTx != nil {
-				err := node.OccupyNonceAccountByCall(ctx, prepareNonce, cid)
-				if err != nil {
-					return err
-				}
 				tb, err := prepareTx.MarshalBinary()
 				if err != nil {
 					panic(err)
 				}
 				extra = attachSystemCall(extra, cid, tb)
+			} else if err := node.store.ReleaseNonceAccountForCall(ctx, prepareNonce.Address, cid); err != nil {
+				return err
 			}
 		}
 
@@ -746,15 +749,20 @@ func (node *Node) handleSignedCalls(ctx context.Context) error {
 	}
 	var wg sync.WaitGroup
 	for key, calls := range callSequence {
-		wg.Add(1)
-		go node.handleSignedCallSequence(ctx, &wg, key, calls)
+		wg.Go(func() {
+			err := node.handleSignedCallSequence(ctx, key, calls)
+			if errors.Is(err, store.ErrNoSpareNonceAccount) {
+				logger.Printf("cleanup for %s waiting for a spare nonce", key)
+			} else if err != nil {
+				panic(err)
+			}
+		})
 	}
 	wg.Wait()
 	return nil
 }
 
-func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGroup, key string, calls []*store.SystemCall) {
-	defer wg.Done()
+func (node *Node) handleSignedCallSequence(ctx context.Context, key string, calls []*store.SystemCall) error {
 	var ids []string
 	for _, c := range calls {
 		ids = append(ids, c.RequestId)
@@ -765,7 +773,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 		err = solanaApp.ValidateWireTransaction(tx)
 		if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
 			logger.Printf("node.handleSignedCallSequence(%s) => skip oversized call %s: %v", key, c.RequestId, err)
-			return
+			return nil
 		}
 		if err != nil {
 			panic(fmt.Errorf("solana.ValidateWireTransaction(%s) => %v", c.RequestId, err))
@@ -786,7 +794,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 			panic(err)
 		}
 		if unconfirmed {
-			return
+			return nil
 		}
 		// should be processed after previous main calls from the same user being confirmed
 		previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, c)
@@ -794,7 +802,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 			panic(err)
 		}
 		if previous {
-			return
+			return nil
 		}
 		// should be processed with its prepare call
 		needPrepare, err := node.store.CheckUnfinishedSubCalls(ctx, c)
@@ -802,7 +810,7 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 			panic(err)
 		}
 		if needPrepare && len(calls) != 2 {
-			return
+			return nil
 		}
 	}
 
@@ -810,31 +818,19 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 		call := calls[0]
 		tx, meta, err := node.handleSignedCall(ctx, call)
 		if err != nil {
-			err = node.processFailedCall(ctx, call, tx.Signatures[0], nil, err)
-			if err != nil {
-				panic(err)
-			}
-			return
+			return node.processFailedCall(ctx, call, tx.Signatures[0], nil, err)
 		}
-		err = node.processSuccessedCall(ctx, call, tx, meta, []confirmCallRecord{{
+		return node.processSuccessedCall(ctx, call, tx, meta, []confirmCallRecord{{
 			Status:    FlagConfirmCallSuccess,
 			CallId:    call.RequestId,
 			Signature: tx.Signatures[0],
 		}})
-		if err != nil {
-			panic(err)
-		}
-		return
 	}
 
 	var sigs []solana.Signature
 	preTx, _, err := node.handleSignedCall(ctx, calls[0])
 	if err != nil {
-		err = node.processFailedCall(ctx, calls[0], preTx.Signatures[0], nil, err)
-		if err != nil {
-			panic(err)
-		}
-		return
+		return node.processFailedCall(ctx, calls[0], preTx.Signatures[0], nil, err)
 	}
 	sigs = append(sigs, preTx.Signatures[0])
 
@@ -845,25 +841,18 @@ func (node *Node) handleSignedCallSequence(ctx context.Context, wg *sync.WaitGro
 
 	tx, meta, err := node.handleSignedCall(ctx, calls[1])
 	if err != nil {
-		err = node.processFailedCall(ctx, calls[1], tx.Signatures[0], []confirmCallRecord{{
+		return node.processFailedCall(ctx, calls[1], tx.Signatures[0], []confirmCallRecord{{
 			Status:    FlagConfirmCallSuccess,
 			CallId:    calls[0].RequestId,
 			Signature: preTx.Signatures[0],
 		}}, err)
-		if err != nil {
-			panic(err)
-		}
-		return
 	}
 	sigs = append(sigs, tx.Signatures[0])
 
-	err = node.processSuccessedCall(ctx, calls[1], tx, meta, []confirmCallRecord{
+	return node.processSuccessedCall(ctx, calls[1], tx, meta, []confirmCallRecord{
 		{Status: FlagConfirmCallSuccess, CallId: calls[0].RequestId, Signature: sigs[0]},
 		{Status: FlagConfirmCallSuccess, CallId: calls[1].RequestId, Signature: sigs[1]},
 	})
-	if err != nil {
-		panic(err)
-	}
 }
 
 func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) (*solana.Transaction, *rpc.TransactionMeta, error) {
@@ -919,18 +908,19 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 
 	if call.Type == store.CallTypeMain && !call.SkipPostProcess {
 		cid := common.UniqueId(id, "post-process")
-		nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
+		nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
+		if err != nil {
+			return err
+		}
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
-			err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
-			if err != nil {
-				return err
-			}
 			data, err := tx.MarshalBinary()
 			if err != nil {
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
+		} else if err := node.store.ReleaseNonceAccountForCall(ctx, nonce.Address, cid); err != nil {
+			return err
 		}
 	}
 
@@ -955,7 +945,6 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 	call = &failed
 	id := common.UniqueId(call.RequestId, "confirm-fail")
 	cid := common.UniqueId(id, "post-process")
-	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
 	records := append(successful, confirmCallRecord{
 		Status:    FlagConfirmCallFail,
 		CallId:    call.RequestId,
@@ -963,27 +952,30 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 	})
 	extra := encodeConfirmCallRecords(records)
 
-	var tx *solana.Transaction
-	switch call.Type {
-	case store.CallTypeMain:
-		tx = node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
-	case store.CallTypePrepare:
-		superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
-		if err != nil {
-			panic(err)
-		}
-		tx = node.CreateRefundWithdrawalTransaction(ctx, call, superior, nonce)
-	}
-	if tx != nil {
-		err := node.OccupyNonceAccountByCall(ctx, nonce, cid)
+	if call.Type == store.CallTypeMain || call.Type == store.CallTypePrepare {
+		nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
 		if err != nil {
 			return err
 		}
-		data, err := tx.MarshalBinary()
-		if err != nil {
-			panic(err)
+		var tx *solana.Transaction
+		if call.Type == store.CallTypeMain {
+			tx = node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
+		} else {
+			superior, err := node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
+			if err != nil {
+				panic(err)
+			}
+			tx = node.CreateRefundWithdrawalTransaction(ctx, call, superior, nonce)
 		}
-		extra = attachSystemCall(extra, cid, data)
+		if tx != nil {
+			data, err := tx.MarshalBinary()
+			if err != nil {
+				panic(err)
+			}
+			extra = attachSystemCall(extra, cid, data)
+		} else if err := node.store.ReleaseNonceAccountForCall(ctx, nonce.Address, cid); err != nil {
+			return err
+		}
 	}
 
 	err := node.store.WriteFailedCallIfNotExist(ctx, call, callError.Error())
@@ -1053,21 +1045,6 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func (node *Node) ReadSpareNonceAccountWithCall(ctx context.Context, cid string) *store.NonceAccount {
-	nonce, err := node.store.ReadNonceAccountByCall(ctx, cid)
-	if err != nil {
-		panic(err)
-	}
-	if nonce != nil {
-		return nonce
-	}
-	nonce, err = node.store.ReadSpareNonceAccount(ctx)
-	if err != nil || nonce == nil {
-		panic(fmt.Errorf("store.ReadSpareNonceAccount() => %v %v", nonce, err))
-	}
-	return nonce
 }
 
 func (node *Node) OccupyNonceAccountByCall(ctx context.Context, nonce *store.NonceAccount, cid string) error {

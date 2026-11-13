@@ -27,6 +27,8 @@ const MaxNonceAccountsPerMix = 5
 
 var ErrNonceAccountLimit = errors.New("nonce account limit reached")
 
+var ErrNoSpareNonceAccount = errors.New("no spare nonce account available")
+
 var nonceAccountCols = []string{"address", "hash", "mix", "call_id", "updated_by", "created_at", "updated_at"}
 
 func nonceAccountFromRow(row Row) (*NonceAccount, error) {
@@ -147,6 +149,61 @@ func (s *SQLite3Store) OccupyNonceAccountByCall(ctx context.Context, address, ca
 	}
 
 	return tx.Commit()
+}
+
+// ReserveNonceAccountForCall selects and claims a spare nonce atomically.
+// A retry of the same call returns its existing reservation, even if the pool is full.
+func (s *SQLite3Store) ReserveNonceAccountForCall(ctx context.Context, call string) (*NonceAccount, error) {
+	if call == "" {
+		return nil, fmt.Errorf("missing call id for nonce reservation")
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer common.Rollback(tx)
+
+	cols := strings.Join(nonceAccountCols, ",")
+	query := fmt.Sprintf("SELECT %s FROM nonce_accounts WHERE call_id=?", cols)
+	nonce, err := nonceAccountFromRow(tx.QueryRowContext(ctx, query, call))
+	if err != nil || nonce != nil {
+		return nonce, err
+	}
+
+	query = fmt.Sprintf("SELECT %s FROM nonce_accounts WHERE mix IS NULL AND call_id IS NULL ORDER BY updated_at ASC, address ASC LIMIT 1", cols)
+	nonce, err = nonceAccountFromRow(tx.QueryRowContext(ctx, query))
+	if err != nil {
+		return nil, err
+	}
+	if nonce == nil {
+		return nil, ErrNoSpareNonceAccount
+	}
+
+	now := time.Now().UTC()
+	query = "UPDATE nonce_accounts SET call_id=?, updated_at=? WHERE address=? AND mix IS NULL AND call_id IS NULL"
+	if err := s.execOne(ctx, tx, query, call, now, nonce.Address); err != nil {
+		return nil, fmt.Errorf("reserve nonce account: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	nonce.CallId = sql.NullString{Valid: true, String: call}
+	nonce.UpdatedAt = now
+	return nonce, nil
+}
+
+// ReleaseNonceAccountForCall returns an unused reservation without releasing
+// a nonce that has since been assigned to another call or locked by a user.
+func (s *SQLite3Store) ReleaseNonceAccountForCall(ctx context.Context, address, call string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	_, err := s.db.ExecContext(ctx, "UPDATE nonce_accounts SET call_id=NULL, updated_at=? WHERE address=? AND call_id=? AND mix IS NULL",
+		time.Now().UTC(), address, call)
+	return err
 }
 
 func (s *SQLite3Store) ReleaseLockedNonceAccount(ctx context.Context, address string) error {
