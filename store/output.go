@@ -9,6 +9,7 @@ import (
 
 	"github.com/MixinNetwork/bot-api-go-client/v3"
 	"github.com/MixinNetwork/safe/common"
+	"github.com/MixinNetwork/safe/mtg"
 )
 
 type UserOutput struct {
@@ -57,6 +58,42 @@ func (s *SQLite3Store) WriteUserDepositWithRequest(ctx context.Context, req *Req
 	err = s.finishRequest(ctx, tx, req, nil, "")
 	if err != nil {
 		return err
+	}
+
+	return tx.Commit()
+}
+
+// Refund references rejected before a system call locks them. A compaction
+// result has no refund transactions, so keep the deposits available for retry.
+func (s *SQLite3Store) RefundUserDepositsWithRequest(ctx context.Context, req *Request, outputs []*UserOutput, txs []*mtg.Transaction, compaction string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer common.Rollback(tx)
+
+	if compaction == "" {
+		for _, output := range outputs {
+			err = s.execOne(ctx, tx, "UPDATE user_outputs SET state=?, updated_at=? WHERE output_id=? AND user_id=? AND state=? AND signed_by IS NULL",
+				common.RequestStateFailed, req.CreatedAt, output.OutputId, output.UserId, common.RequestStateInitial)
+			if err != nil {
+				return fmt.Errorf("refund user output %s: %w", output.OutputId, err)
+			}
+		}
+	}
+
+	err = s.failRequest(ctx, tx, req, txs, compaction)
+	if err != nil {
+		return err
+	}
+
+	if compaction == "" && len(txs) > 0 {
+		if err := s.writeNotifications(ctx, tx, txs); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()

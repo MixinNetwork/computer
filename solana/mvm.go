@@ -216,12 +216,12 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 	if err != nil || storage == nil {
 		return node.failRequest(ctx, req, "")
 	}
-	// External-asset deployments are MTG consensus state and can be checked
-	// deterministically before the call is persisted.
+	// Reject unsupported references before locking deposits. This includes
+	// deployed tokens returning as Solana assets; refund all references together.
 	err = node.validateSystemCallReferencedAssets(ctx, os)
 	if err != nil {
 		logger.Printf("node.validateSystemCallReferencedAssets(%s) => %v", req.Id, err)
-		return node.failRequest(ctx, req, "")
+		return node.refundSystemCallDeposits(ctx, req, os, mix)
 	}
 
 	cid := uuid.Must(uuid.FromBytes(data[8:24])).String()
@@ -279,6 +279,14 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 		return node.failRequest(ctx, req, "")
 	}
 
+	// Validate the aggregated asset amounts before locking deposits or funding
+	// Prepare. Any precision loss rejects the call and refunds every reference.
+	err = validateSystemCallAssetAmounts(os)
+	if err != nil {
+		logger.Printf("validateSystemCallAssetAmounts(%s) => %v", call.RequestId, err)
+		return node.refundSystemCallDeposits(ctx, req, os, mix)
+	}
+
 	err = node.store.WriteInitialSystemCallWithRequest(ctx, req, call, os)
 	logger.Printf("solana.WriteInitialSystemCallWithRequest(%v %d) => %v", call, len(os), err)
 	if err != nil {
@@ -334,9 +342,14 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	switch flag {
 	case ConfirmFlagNonceAvailable:
 		as := node.GetSystemCallRelatedAsset(ctx, os)
+		expectedPrepareAssets := append([]*ReferencedTxAsset(nil), as...)
 		var sessions []*store.Session
 		prepare, tx, err := node.getSubSystemCallFromExtra(ctx, req, extra[16:])
 		if err != nil {
+			return node.failRequest(ctx, req, "")
+		}
+		if len(expectedPrepareAssets) > 0 && prepare == nil {
+			logger.Printf("missing prepare for system call references: %s", call.RequestId)
 			return node.failRequest(ctx, req, "")
 		}
 		if prepare != nil {
@@ -357,7 +370,7 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 			if err != nil {
 				return node.failRequest(ctx, req, "")
 			}
-			err = node.comparePrepareCallWithSolanaTx(tx, as)
+			err = node.comparePrepareCallWithSolanaTx(tx, expectedPrepareAssets, node.getMTGAddress(ctx), solana.MustPublicKeyFromBase58(user.ChainAddress), true)
 			logger.Printf("node.comparePrepareCallWithSolanaTx(%s) => %v", call.RequestId, err)
 			if err != nil {
 				return node.failRequest(ctx, req, "")
@@ -991,6 +1004,17 @@ func (node *Node) failDepositRequest(ctx context.Context, out *mtg.Action, compa
 	return nil, compaction
 }
 
+// Refund references rejected before a SystemCall is persisted. These outputs
+// are still Initial, unlike the Pending outputs of an already accepted call.
+func (node *Node) refundSystemCallDeposits(ctx context.Context, req *store.Request, os []*store.UserOutput, mix *bot.MixAddress) ([]*mtg.Transaction, string) {
+	txs, compaction := node.buildRefundTxs(ctx, req, req.Id, aggregateSystemCallReferenceAssets(os), mix.Members(), int(mix.Threshold))
+	err := node.store.RefundUserDepositsWithRequest(ctx, req, os, txs, compaction)
+	if err != nil {
+		panic(err)
+	}
+	return txs, compaction
+}
+
 func (node *Node) refundAndFailRequest(ctx context.Context, req *store.Request, members []string, threshod int, call *store.SystemCall, os []*store.UserOutput) ([]*mtg.Transaction, string) {
 	as := aggregateSystemCallReferenceAssets(os)
 	txs, compaction := node.buildRefundTxs(ctx, req, call.RequestId, as, members, threshod)
@@ -1024,6 +1048,9 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	if err != nil || referenceCall == nil {
 		panic(fmt.Errorf("store.ReadSystemCallByRequestId(%s) => %v %v", call.RequestId, referenceCall, err))
 	}
+	// Preserve the persisted state for reference lookup, but use the confirmed
+	// attempt's signature for deterministic cleanup balance checks.
+	referenceCall.Hash = call.Hash
 
 	var outputs []*store.UserOutput
 	var mix *bot.MixAddress

@@ -2,6 +2,7 @@ package solana
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -884,7 +885,7 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 	if err != nil {
 		panic(err)
 	}
-	if index >= 0 {
+	if tx.IsSigner(publicKey) && index >= 0 {
 		sig, err := base64.StdEncoding.DecodeString(call.Signature.String)
 		if err != nil {
 			panic(err)
@@ -946,6 +947,10 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 
 func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall, signature solana.Signature, successful []confirmCallRecord, callError error) error {
 	logger.Printf("node.processFailedCall(%s)", call.RequestId)
+	// Builders use the same confirmed balance snapshot as confirmation replay.
+	failed := *call
+	failed.Hash = sql.NullString{Valid: true, String: signature.String()}
+	call = &failed
 	id := common.UniqueId(call.RequestId, "confirm-fail")
 	cid := common.UniqueId(id, "post-process")
 	nonce := node.ReadSpareNonceAccountWithCall(ctx, cid)
