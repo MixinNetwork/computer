@@ -130,6 +130,9 @@ func (c *Client) rpcGetAsset(ctx context.Context, address string, commitment rpc
 			Encoding:   "jsonParsed",
 			Commitment: commitment,
 		})
+		if errors.Is(err, rpc.ErrNotFound) {
+			return nil, nil
+		}
 		if mtg.CheckRetryableError(err) {
 			time.Sleep(time.Millisecond * 300)
 			continue

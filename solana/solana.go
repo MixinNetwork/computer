@@ -330,6 +330,9 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 				logger.Printf("solana.RPCGetAsset(%s) => %v", transfer.TokenAddress, err)
 				return err
 			}
+			if asset == nil {
+				return fmt.Errorf("deposit mint %s for transaction %s: %w", transfer.TokenAddress, hash, rpc.ErrNotFound)
+			}
 			decimal = uint8(asset.Decimals)
 		}
 		if transfer.TokenAddress == solanaApp.SolanaEmptyAddress {
