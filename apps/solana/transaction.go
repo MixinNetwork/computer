@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/MixinNetwork/safe/common"
 	sc "github.com/blocto/solana-go-sdk/common"
@@ -129,6 +130,17 @@ func (c *Client) InitializeAccount(ctx context.Context, key, user string) (*sola
 	return tx, nil
 }
 
+// truncateUTF8 limits a valid UTF-8 string to at most limit bytes.
+func truncateUTF8(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
+}
+
 func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, assets []*DeployedAsset, rent uint64) (*solana.Transaction, error) {
 	builder := solana.NewTransactionBuilder()
 	builder.SetFeePayer(payer)
@@ -155,14 +167,8 @@ func (c *Client) CreateMints(ctx context.Context, payer, mtg solana.PublicKey, a
 				SetMintAccount(solana.MustPublicKeyFromBase58(asset.Address)).Build(),
 		)
 
-		name := asset.Asset.Name
-		if len(name) > maxNameLength {
-			name = name[:maxNameLength]
-		}
-		symbol := asset.Asset.Symbol
-		if len(symbol) > maxSymbolLength {
-			symbol = symbol[:maxSymbolLength]
-		}
+		name := truncateUTF8(asset.Asset.Name, maxNameLength)
+		symbol := truncateUTF8(asset.Asset.Symbol, maxSymbolLength)
 		builder.AddInstruction(
 			CustomInstruction{
 				Instruction: NewMetaplexCreateV1Instruction(
