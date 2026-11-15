@@ -47,7 +47,7 @@ func TestUserSystemCallFeePayer(t *testing.T) {
 			require.NoError(t, err)
 			// Both transactions satisfy the previous signer-only check.
 			require.True(t, tx.IsSigner(payer.PublicKey()))
-			err = node.checkUserSystemCall(ctx, tx)
+			err = node.checkUserSystemCall(ctx, tx, user)
 			if test.wantErr != "" {
 				require.ErrorContains(t, err, test.wantErr)
 			} else {
@@ -55,7 +55,75 @@ func TestUserSystemCallFeePayer(t *testing.T) {
 			}
 		})
 	}
-	require.ErrorContains(t, node.checkUserSystemCall(ctx, new(solana.Transaction)), "invalid system call fee payer")
+	require.ErrorContains(t, node.checkUserSystemCall(ctx, new(solana.Transaction), user), "invalid system call fee payer")
+}
+
+func TestUserSystemCallAdditionalSignatures(t *testing.T) {
+	ctx := context.Background() // Exercise production admission checks.
+	payer, user, additional := solana.NewWallet(), solana.NewWallet(), solana.NewWallet()
+	nonce, recipient := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	node := &Node{conf: &Configuration{SolanaKey: payer.PrivateKey.String()}}
+	for _, test := range []struct {
+		name      string
+		signature string
+		omitUser  bool
+		wantErr   bool
+	}{
+		{name: "only node signatures pending"},
+		{name: "missing additional signature", signature: "missing", wantErr: true},
+		{name: "invalid additional signature", signature: "invalid", wantErr: true},
+		{name: "signature for another message", signature: "stale", wantErr: true},
+		{name: "valid additional signature", signature: "valid"},
+		{name: "valid additional signature without user signer", signature: "valid", omitUser: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instructions := []solana.Instruction{
+				system.NewAdvanceNonceAccountInstruction(nonce, solana.SysVarRecentBlockHashesPubkey, payer.PublicKey()).Build(),
+			}
+			if !test.omitUser {
+				instructions = append(instructions, system.NewTransferInstruction(1, user.PublicKey(), recipient).Build())
+			}
+			if test.signature != "" {
+				instructions = append(instructions, system.NewTransferInstruction(1, additional.PublicKey(), recipient).Build())
+			}
+			config := solana.TransactionConfig{}.WithComputeUnitLimit(200_000).WithLoadedAccountsDataSizeLimit(64 * 1024 * 1024)
+			tx, err := solana.NewTransaction(instructions, solana.Hash{1}, solana.TransactionPayer(payer.PublicKey()), solana.TransactionV1Config(config))
+			require.NoError(t, err)
+			tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
+			if test.signature == "valid" || test.signature == "stale" {
+				_, err = tx.PartialSign(solanaApp.BuildSignersGetter(additional.PrivateKey))
+				require.NoError(t, err)
+			}
+			if test.signature == "stale" {
+				tx.Message.RecentBlockhash = solana.Hash{2}
+			}
+			if test.signature == "invalid" {
+				index, err := solanaApp.GetSignatureIndexOfAccount(*tx, additional.PublicKey())
+				require.NoError(t, err)
+				tx.Signatures[index] = solana.Signature{1}
+			}
+
+			// Use the same wire decoding and nonce checks as Main admission.
+			raw, err := tx.MarshalBinary()
+			require.NoError(t, err)
+			req := &store.Request{Id: uuid.Must(uuid.NewV4()).String(), CreatedAt: time.Now().UTC()}
+			call, decoded, err := node.buildSystemCallFromBytes(ctx, req, req.Id, raw, false)
+			require.NoError(t, err)
+			require.NoError(t, verifySystemCallNonce(decoded, call.NonceAccount, tx.Message.RecentBlockhash, payer.PublicKey()))
+			err = node.checkUserSystemCall(ctx, decoded, user.PublicKey())
+			if test.wantErr {
+				require.ErrorContains(t, err, "invalid system call signature: "+additional.PublicKey().String())
+				return
+			}
+			require.NoError(t, err)
+			unchanged, err := decoded.MarshalBinary()
+			require.NoError(t, err)
+			require.Equal(t, raw, unchanged, "admission must preserve supplied signatures and message bytes")
+			_, err = decoded.PartialSign(solanaApp.BuildSignersGetter(payer.PrivateKey, user.PrivateKey))
+			require.NoError(t, err)
+			require.NoError(t, decoded.VerifySignatures(), "accepted Main must be fully signed after the node supplies its signatures")
+		})
+	}
 }
 
 func TestSOLCleanupPolicy(t *testing.T) {
@@ -554,7 +622,7 @@ func TestSystemCallPrecisionRefundsAllDeposits(t *testing.T) {
 			for _, output := range outputs {
 				saved := readOutput(output)
 				require.Equal(t, output.Amount, saved.Amount)
-					require.EqualValues(t, common.RequestStateFailed, saved.State)
+				require.EqualValues(t, common.RequestStateFailed, saved.State)
 			}
 			require.EqualValues(t, common.RequestStateInitial, readOutput(unreferenced).State)
 			savedReq, err := node.store.ReadRequest(ctx, req.Id)

@@ -274,7 +274,7 @@ func (node *Node) processSystemCall(ctx context.Context, req *store.Request) ([]
 		logger.Printf("store.ReadSystemCallByMessage(%s) => %s", call.MessageHash, old.RequestId)
 		return node.failRequest(ctx, req, "")
 	}
-	err = node.checkUserSystemCall(ctx, tx)
+	err = node.checkUserSystemCall(ctx, tx, solana.MustPublicKeyFromBase58(user.ChainAddress))
 	if err != nil {
 		logger.Printf("node.checkUserSystemCall(%v) => %v", tx, err)
 		return node.failRequest(ctx, req, "")

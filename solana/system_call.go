@@ -621,28 +621,44 @@ func verifySystemCallNonce(tx *solana.Transaction, nonceAccount string, nonceHas
 	return nil
 }
 
-func (node *Node) checkUserSystemCall(ctx context.Context, tx *solana.Transaction) error {
+func (node *Node) checkUserSystemCall(ctx context.Context, tx *solana.Transaction, user solana.PublicKey) error {
 	if common.CheckTestEnvironment(ctx) {
 		return nil
 	}
 
+	payer := node.SolanaPayer()
 	// Require the node to pay Main's fees. Being a signer alone would allow
 	// fees to reduce the user's funded balance even when Main fails.
-	if len(tx.Message.AccountKeys) == 0 || tx.Message.AccountKeys[0] != node.SolanaPayer() {
+	if len(tx.Message.AccountKeys) == 0 || tx.Message.AccountKeys[0] != payer {
 		return fmt.Errorf("invalid system call fee payer")
 	}
-	if !tx.IsSigner(node.SolanaPayer()) {
+	if !tx.IsSigner(payer) {
 		return fmt.Errorf("tx.IsSigner(payer) => %t", false)
 	}
 
 	// make sure fee payer is only used for the first nonce advance transaction
-	index, err := solanaApp.GetSignatureIndexOfAccount(*tx, node.SolanaPayer())
+	index, err := solanaApp.GetSignatureIndexOfAccount(*tx, payer)
 	if err != nil {
 		return err
 	}
 	for i, ins := range tx.Message.Instructions[1:] {
 		if slices.Contains(ins.Accounts, uint16(index)) {
 			return fmt.Errorf("invalid instruction: %d %v", i+1, ins)
+		}
+	}
+
+	// Only the payer and the user's MPC key are signed later. Other required
+	// signers must already have signed this exact message.
+	message, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	for i, signer := range tx.Message.Signers() {
+		if signer == payer || signer == user {
+			continue
+		}
+		if i >= len(tx.Signatures) || !tx.Signatures[i].Verify(signer, message) {
+			return fmt.Errorf("invalid system call signature: %s", signer)
 		}
 	}
 	return nil
