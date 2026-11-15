@@ -190,6 +190,7 @@ CREATE INDEX IF NOT EXISTS outputs_by_user_hash_state_created ON user_outputs(us
 CREATE TABLE IF NOT EXISTS nonce_accounts (
   address        VARCHAR NOT NULL,
   hash           VARCHAR NOT NULL,
+  hash_slot      INTEGER NOT NULL DEFAULT 0,
   mix            VARCHAR,
   call_id        VARCHAR,
   updated_by     VARCHAR,
@@ -199,6 +200,19 @@ CREATE TABLE IF NOT EXISTS nonce_accounts (
 );
 
 CREATE INDEX IF NOT EXISTS nonces_by_mix_call_updated ON nonce_accounts(mix, call_id, updated_at);
+
+-- Keep the exact submitted operation until its nonce is consumed or its
+-- request finishes without creating a call. A wall-clock TTL is not an outcome.
+CREATE TABLE IF NOT EXISTS nonce_proposals (
+  call_id       VARCHAR NOT NULL PRIMARY KEY,
+  nonce_address VARCHAR NOT NULL,
+  nonce_hash    VARCHAR NOT NULL,
+  action        INTEGER NOT NULL,
+  extra         TEXT NOT NULL,
+  retry_id      VARCHAR NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS requests_by_action_extra ON requests(action, extra);
 
 
 CREATE TABLE IF NOT EXISTS confirmed_withdrawals (

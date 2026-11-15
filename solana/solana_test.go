@@ -88,7 +88,7 @@ func TestGetNonceAccountHash(t *testing.T) {
 	rpcClient := solanaApp.NewClient(rpc)
 
 	key := solana.MustPublicKeyFromBase58(testNonceAccountAddress)
-	hash, err := rpcClient.GetNonceAccountHash(ctx, key)
+	hash, _, err := rpcClient.GetNonceAccountHash(ctx, key)
 	require.Nil(err)
 	require.Equal(testNonceAccountHash, hash.String())
 }

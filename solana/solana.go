@@ -39,7 +39,13 @@ const (
 	solanaCleanupRentLamports uint64 = 650_240
 )
 
+func nonceRetryable(err error) bool {
+	return errors.Is(err, store.ErrNoSpareNonceAccount) || errors.Is(err, store.ErrNonceAccountChanged)
+}
+
 var errInvalidAddressLookup = errors.New("invalid address lookup")
+
+var errDepositProposalPending = errors.New("deposit proposal awaiting acceptance")
 
 func isSOLCleanupDust(assetID string, lamports decimal.Decimal) bool {
 	return assetID == solanaApp.SolanaChainBase &&
@@ -209,8 +215,8 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 
 		last := min(checkpoint+batch, int64(height)+1-SolanaBlockDelay)
 		err = node.solanaReadBlocks(ctx, checkpoint, last, rentExemptBalance)
-		if errors.Is(err, store.ErrNoSpareNonceAccount) {
-			logger.Printf("deposit scanner waiting for a spare nonce at block %d", checkpoint+1)
+		if nonceRetryable(err) || errors.Is(err, errDepositProposalPending) {
+			logger.Printf("deposit scanner retrying from block %d: %v", checkpoint+1, err)
 			continue
 		}
 		if err != nil {
@@ -235,7 +241,7 @@ func (node *Node) solanaReadBlocks(ctx context.Context, checkpoint, last int64, 
 
 	var retryErr error
 	for _, err := range errs {
-		if errors.Is(err, store.ErrNoSpareNonceAccount) {
+		if nonceRetryable(err) || errors.Is(err, errDepositProposalPending) {
 			retryErr = err
 		} else if err != nil {
 			return err
@@ -263,11 +269,17 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 		return err
 	}
 
+	var pending error
 	for _, tx := range block.Transactions {
 		err = node.solanaProcessTransaction(ctx, tx.MustGetTransaction(), tx.Meta, rentExemptBalance)
-		if err != nil {
+		if errors.Is(err, errDepositProposalPending) {
+			pending = err
+		} else if err != nil {
 			return err
 		}
+	}
+	if pending != nil {
+		return pending
 	}
 
 	return node.store.WriteCache(ctx, key, "processed")
@@ -364,14 +376,17 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			Decimals:    decimal,
 		})
 	}
+	var pending error
 	for user, ts := range tsMap {
 		err = node.solanaProcessDepositTransaction(ctx, hash, user, ts)
-		if err != nil {
+		if errors.Is(err, errDepositProposalPending) {
+			pending = err
+		} else if err != nil {
 			logger.Printf("node.solanaProcessDepositTransaction(%s) => %v", hash, err)
 			return err
 		}
 	}
-	return nil
+	return pending
 }
 
 func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, ts []*solanaApp.TokenTransfer) error {
@@ -398,6 +413,11 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	if err != nil {
 		return err
 	}
+	if sent, _, err := node.resendNonceProposal(ctx, id, nonce); err != nil {
+		return err
+	} else if sent {
+		return errDepositProposalPending
+	}
 	tx, err := node.solana.TransferOrBurnTokens(ctx, node.SolanaPayer(), solana.MustPublicKeyFromBase58(user), nonce.Account(), ts)
 	if err != nil {
 		return err
@@ -408,11 +428,17 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	}
 	extra = attachSystemCall(extra, cid, data)
 
-	return node.sendObserverTransactionToGroup(ctx, &common.Operation{
+	err = node.sendObserverTransactionWithNonce(ctx, &common.Operation{
 		Id:    id,
 		Type:  OperationTypeDeposit,
 		Extra: extra,
-	}, nil)
+	}, nonce)
+	if err != nil {
+		return err
+	}
+	// Transport success does not mean MTG accepted the proposal. Keep scanning
+	// this block until its call exists, so a later rejection can be retried.
+	return errDepositProposalPending
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
@@ -479,7 +505,7 @@ func (node *Node) CreateMintTransaction(ctx context.Context, asset string) (stri
 	return tid, tx, da, nil
 }
 
-func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, string, error) {
+func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, string, uint64, error) {
 	id := fmt.Sprintf("OBSERVER:%s:MEMBERS:%v:%d", node.id, node.GetMembers(), node.conf.MTG.Genesis.Threshold)
 	id = common.UniqueId(id, fmt.Sprintf("computer nonce account: %d", index))
 	seed := crypto.Sha256Hash(uuid.Must(uuid.FromString(id)).Bytes())
@@ -487,7 +513,7 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 
 	acc, err := node.solana.RPCGetAccount(ctx, nonce.PublicKey())
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	if acc == nil {
 		// Account funding must use current rent rather than the node's cached quote.
@@ -497,24 +523,51 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 		}
 		tx, err := node.solana.CreateNonceAccount(ctx, node.conf.SolanaKey, nonce.String(), rent)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 		_, err = node.SendTransactionUtilConfirm(ctx, tx, nil)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 	}
 
 	for {
-		hash, err := node.solana.GetNonceAccountHash(ctx, nonce.PublicKey())
+		hash, slot, err := node.solana.GetNonceAccountHash(ctx, nonce.PublicKey())
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 		if hash == nil {
 			time.Sleep(time.Millisecond * 300)
 			continue
 		}
-		return nonce.PublicKey().String(), hash.String(), nil
+		return nonce.PublicKey().String(), hash.String(), slot, nil
+	}
+}
+
+func (node *Node) reserveNonceAccountForMix(ctx context.Context, mix string) (*store.NonceAccount, error) {
+	for {
+		nonce, err := node.store.ReserveNonceAccountForMix(ctx, mix)
+		if err != nil {
+			return nil, err
+		}
+		hash, slot, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
+		if err == nil && hash != nil && slot < nonce.HashSlot {
+			err = fmt.Errorf("%w: nonce RPC slot %d < %d", store.ErrNonceAccountChanged, slot, nonce.HashSlot)
+		}
+		if err != nil || hash == nil {
+			if err == nil {
+				err = fmt.Errorf("nonce account %s: %w", nonce.Address, rpc.ErrNotFound)
+			}
+			return nil, errors.Join(err, node.store.ReleaseLockedNonceAccount(ctx, nonce))
+		}
+		if hash.String() != nonce.Hash {
+			// Refresh only our reservation; a concurrent claim must survive.
+			if err := node.store.UpdateNonceAccount(ctx, nonce, hash.String(), slot, ""); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return nonce, nil
 	}
 }
 

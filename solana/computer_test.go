@@ -427,9 +427,11 @@ func TestFailedPostprocessCompaction(t *testing.T) {
 
 func testObserverConfirmPostProcessCall(ctx context.Context, require *require.Assertions, nodes []*Node, sub *store.SystemCall) {
 	node := nodes[0]
-	err := node.store.UpdateNonceAccount(ctx, sub.NonceAccount, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", sub.RequestId)
-	require.Nil(err)
 	nonce, err := node.store.ReadNonceAccount(ctx, sub.NonceAccount)
+	require.NoError(err)
+	err = node.store.UpdateNonceAccount(ctx, nonce, "6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", nonce.HashSlot+1, sub.RequestId)
+	require.Nil(err)
+	nonce, err = node.store.ReadNonceAccount(ctx, sub.NonceAccount)
 	require.Nil(err)
 	require.Equal("6c8hGTPpTd4RMbYyM3wQgnwxZbajKhovhfDgns6bvmrX", nonce.Hash)
 	require.False(nonce.CallId.Valid)
@@ -487,9 +489,11 @@ func testObserverConfirmPostProcessCall(ctx context.Context, require *require.As
 
 func testObserverConfirmMainCall(ctx context.Context, require *require.Assertions, nodes []*Node, call *store.SystemCall) *store.SystemCall {
 	node := nodes[0]
-	err := node.store.UpdateNonceAccount(ctx, call.NonceAccount, "E9esweXgoVfahhRvpWR4kefZXR54qd82ZGhVTbzQtCoX", call.RequestId)
-	require.Nil(err)
 	nonce, err := node.store.ReadNonceAccount(ctx, call.NonceAccount)
+	require.NoError(err)
+	err = node.store.UpdateNonceAccount(ctx, nonce, "E9esweXgoVfahhRvpWR4kefZXR54qd82ZGhVTbzQtCoX", nonce.HashSlot+1, call.RequestId)
+	require.Nil(err)
+	nonce, err = node.store.ReadNonceAccount(ctx, call.NonceAccount)
 	require.Nil(err)
 	require.Equal("E9esweXgoVfahhRvpWR4kefZXR54qd82ZGhVTbzQtCoX", nonce.Hash)
 	require.Equal(call.RequestId, nonce.UpdatedBy.String)
@@ -497,7 +501,7 @@ func testObserverConfirmMainCall(ctx context.Context, require *require.Assertion
 	require.False(nonce.Mix.Valid)
 
 	cid := common.UniqueId(call.RequestId, "post-process")
-	err = node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	err = node.store.OccupyNonceAccountByCall(ctx, nonce, cid)
 	require.Nil(err)
 	signatures := []solana.Signature{
 		solana.MustSignatureFromBase58("2tPHv7kbUeHRWHgVKKddQqXnjDhuX84kTyCvRy1BmCM4m4Fkq4vJmNAz8A7fXqckrSNRTAKuPmAPWnzr5T7eCChb"),
@@ -690,7 +694,7 @@ func testUserRequestSystemCall(ctx context.Context, require *require.Assertions,
 	user, err = node.store.ReadUser(ctx, c.UserIdFromPublicPath())
 	require.Nil(err)
 	require.Equal(user.MixAddress, nonce.Mix.String)
-	err = node.store.OccupyNonceAccountByCall(ctx, c.NonceAccount, c.RequestId)
+	err = node.store.OccupyNonceAccountByCall(ctx, nonce, c.RequestId)
 	require.Nil(err)
 	nonce, err = node.store.ReadNonceAccount(ctx, c.NonceAccount)
 	require.Nil(err)
@@ -815,7 +819,7 @@ func testObserverRequestCreateNonceAccount(ctx context.Context, require *require
 	node := nodes[0]
 
 	for _, nonce := range as {
-		err := node.store.WriteNonceAccount(ctx, nonce[0], nonce[1])
+		err := node.store.WriteNonceAccount(ctx, nonce[0], nonce[1], 0)
 		require.Nil(err)
 	}
 	count, err := node.store.CountNonceAccounts(ctx)

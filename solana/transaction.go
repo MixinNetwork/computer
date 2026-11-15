@@ -149,6 +149,33 @@ func (node *Node) confirmBurnRelatedSystemCallToGroup(ctx context.Context, op *c
 	return nil
 }
 
+func (node *Node) sendObserverTransactionWithNonce(ctx context.Context, op *common.Operation, nonce *store.NonceAccount) error {
+	p, err := node.store.WriteNonceProposal(ctx, nonce, op.Type, hex.EncodeToString(op.Extra))
+	if err != nil {
+		return err
+	}
+	return node.sendNonceProposal(ctx, op.Id, p)
+}
+
+// The returned retry ID also applies when rebuilding no longer needs a nonce.
+func (node *Node) resendNonceProposal(ctx context.Context, id string, nonce *store.NonceAccount) (bool, string, error) {
+	p, err := node.store.ReadNonceProposal(ctx, nonce)
+	if err != nil || p == nil {
+		return false, "", err
+	}
+	if p.RejectedBy != "" {
+		return false, p.RejectedBy, nil // Rebuild; WriteNonceProposal persists this retry ID.
+	}
+	return true, "", node.sendNonceProposal(ctx, id, p)
+}
+
+func (node *Node) sendNonceProposal(ctx context.Context, id string, p *store.NonceProposal) error {
+	if p.RetryId != "" {
+		id = common.UniqueId(id, p.RetryId)
+	}
+	return node.sendObserverTransactionToGroup(ctx, &common.Operation{Id: id, Type: p.Action, Extra: common.DecodeHexOrPanic(p.Extra)}, nil)
+}
+
 func (node *Node) sendObserverTransactionToGroup(ctx context.Context, op *common.Operation, references []crypto.Hash) error {
 	logger.Printf("node.sendObserverTransactionToGroup(%v)", op)
 	extra := encodeOperation(op)
@@ -169,7 +196,7 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 	receivers := node.GetMembers()
 	threshold := node.conf.MTG.Genesis.Threshold
 	amt := decimal.RequireFromString(amount)
-	traceId = common.UniqueId(traceId, fmt.Sprintf("MTG:%v:%d", receivers, threshold))
+	traceId = node.groupTransactionTraceId(traceId)
 
 	if common.CheckTestEnvironment(ctx) {
 		return node.mtgQueueTestOutput(ctx, memo)
@@ -191,6 +218,10 @@ func (node *Node) sendTransactionToGroupUntilSufficient(ctx context.Context, mem
 	}}, []byte(m), traceId, *node.SafeUser())
 	logger.Printf("node.CreateObjectStorageUntilSufficient(%s) => %v", traceId, err)
 	return err
+}
+
+func (node *Node) groupTransactionTraceId(traceId string) string {
+	return common.UniqueId(traceId, fmt.Sprintf("MTG:%v:%d", node.GetMembers(), node.conf.MTG.Genesis.Threshold))
 }
 
 func encodeOperation(op *common.Operation) []byte {

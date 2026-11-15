@@ -41,7 +41,8 @@ func TestDepositScannerNonceExhaustion(t *testing.T) {
 func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8, missing, waitForNonce bool) {
 	t.Helper()
 	ctx := common.EnableTestEnvironment(context.Background())
-	st, err := store.OpenSQLite3Store(filepath.Join(t.TempDir(), "scanner.sqlite"))
+	path := filepath.Join(t.TempDir(), "scanner.sqlite")
+	st, err := store.OpenSQLite3Store(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	payer, sender := solana.NewWallet(), solana.NewWallet()
@@ -154,8 +155,8 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 		node.conf.MTG.Genesis.Members = []string{member}
 		node.conf.MTG.Genesis.Threshold = 1
 		node.conf.MTG.App.SpendPrivateKey = crypto.NewKeyFromSeed(make([]byte, 64)).String()
+		require.NoError(t, node.writeBlockCheckpoint(ctx, 99))
 		if waitForNonce {
-			require.NoError(t, node.writeBlockCheckpoint(ctx, 99))
 			for range 2 {
 				err := node.solanaReadBlocks(ctx, 99, 101, 2_039_280)
 				require.ErrorIs(t, err, store.ErrNoSpareNonceAccount)
@@ -170,16 +171,20 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 			require.EqualValues(t, 1, emptyBlockReads.Load(), "completed blocks should stay cached while waiting")
 		}
 		nonce := solana.NewWallet().PublicKey()
-		require.NoError(t, st.WriteNonceAccount(ctx, nonce.String(), solana.Hash{}.String()))
+		require.NoError(t, st.WriteNonceAccount(ctx, nonce.String(), solana.Hash{}.String(), 0))
 
-		require.NoError(t, node.solanaReadBlocks(ctx, 99, 101, 2_039_280))
-		checkpoint, err := st.ReadProperty(ctx, store.SolanaScanHeightKey)
-		require.NoError(t, err)
-		require.Equal(t, "101", checkpoint)
-		require.EqualValues(t, 1, emptyBlockReads.Load())
-		cached, err := st.ReadCache(ctx, "block:100")
-		require.NoError(t, err)
-		require.Equal(t, "processed", cached)
+		checkPending := func() {
+			t.Helper()
+			require.ErrorIs(t, node.solanaReadBlocks(ctx, 99, 101, 2_039_280), errDepositProposalPending)
+			checkpoint, err := st.ReadProperty(ctx, store.SolanaScanHeightKey)
+			require.NoError(t, err)
+			require.Equal(t, "99", checkpoint)
+			cached, err := st.ReadCache(ctx, "block:100")
+			require.NoError(t, err)
+			require.Empty(t, cached, "submission alone must not complete the block")
+			require.EqualValues(t, 1, emptyBlockReads.Load(), "completed blocks stay cached")
+		}
+		checkPending()
 		var out mtg.Action
 		select {
 		case data := <-network.mtgChannel(node.id):
@@ -219,18 +224,67 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 		reserved, err := st.ReadNonceAccount(ctx, nonce.String())
 		require.NoError(t, err)
 		require.True(t, reserved.CallId.Valid)
-		// Re-reading a processed block must not create a second deposit call.
-		require.NoError(t, node.solanaReadBlock(ctx, 100, 2_039_280))
-		require.Empty(t, network.mtgChannel(node.id))
+		// Restart before acceptance. The normal scanner must revisit the block
+		// and reuse the persisted proposal, including its exact transaction bytes.
+		require.NoError(t, st.Close())
+		st, err = store.OpenSQLite3Store(path)
+		require.NoError(t, err)
+		node.store = st
+		checkPending()
+		var retry mtg.Action
+		select {
+		case data := <-network.mtgChannel(node.id):
+			require.NoError(t, json.Unmarshal(data, &retry))
+		default:
+			t.Fatal("scanner did not retry its persisted proposal")
+		}
+		require.Equal(t, out.Extra, retry.Extra)
 
-		// An unfinished block can be retried after one of its deposits has
-		// completed and released its nonce. Do not allocate or propose it again.
+		// MTG can reject the proposal after transport succeeded. A regular block
+		// scan must rebuild it under a fresh retry ID and still wait for acceptance.
+		rejected := &store.Request{
+			Id: out.OutputId, MixinHash: crypto.Sha256Hash([]byte(out.OutputId)),
+			Role: RequestRoleObserver, Action: op.Type, ExtraHEX: hex.EncodeToString(op.Extra),
+			State: common.RequestStateInitial, Sequence: 1, CreatedAt: time.Now().UTC(), Output: &out,
+		}
+		require.NoError(t, st.WriteRequestIfNotExist(ctx, rejected))
+		require.NoError(t, st.FailRequest(ctx, rejected, "", nil))
+		for range 2 {
+			checkPending()
+			select {
+			case data := <-network.mtgChannel(node.id):
+				require.NoError(t, json.Unmarshal(data, &retry))
+			default:
+				t.Fatal("scanner did not retry the rejected proposal")
+			}
+			require.Equal(t, out.Extra, retry.Extra)
+			proposal, err := st.ReadNonceProposal(ctx, reserved)
+			require.NoError(t, err)
+			require.Equal(t, rejected.Id, proposal.RetryId)
+			require.Empty(t, proposal.RejectedBy, "the previous rejection must not reject the new attempt")
+		}
+		reserved, err = st.ReadNonceAccount(ctx, nonce.String())
+		require.NoError(t, err)
+
+		// Acceptance makes the block complete without waiting for execution.
 		require.NoError(t, st.TestWriteCall(ctx, &store.SystemCall{
 			RequestId: reserved.CallId.String, Type: store.CallTypeDeposit,
 			NonceAccount: nonce.String(), Raw: sweep.MustToBase64(),
-			State: common.RequestStateDone, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+			State: common.RequestStatePending, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 		}))
-		require.NoError(t, st.UpdateNonceAccount(ctx, nonce.String(), solana.Hash{1}.String(), reserved.CallId.String))
+		require.NoError(t, node.solanaReadBlocks(ctx, 99, 101, 2_039_280))
+		checkpoint, err := st.ReadProperty(ctx, store.SolanaScanHeightKey)
+		require.NoError(t, err)
+		require.Equal(t, "101", checkpoint)
+		cached, err := st.ReadCache(ctx, "block:100")
+		require.NoError(t, err)
+		require.Equal(t, "processed", cached)
+		require.Empty(t, network.mtgChannel(node.id))
+		require.NoError(t, node.solanaReadBlock(ctx, 100, 2_039_280))
+		require.Empty(t, network.mtgChannel(node.id))
+
+		// Re-reading a deposit after its nonce advances must not reserve another.
+		require.NoError(t, st.UpdateNonceAccount(ctx, reserved, solana.Hash{1}.String(), reserved.HashSlot+1, reserved.CallId.String))
 		require.NoError(t, node.solanaProcessTransaction(ctx, tx, meta, 2_039_280))
 		spare, err := st.CountSpareNonceAccounts(ctx)
 		require.NoError(t, err)

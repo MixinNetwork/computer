@@ -350,21 +350,21 @@ func (c *Client) RPCGetTokenAccountsByOwner(ctx context.Context, owner solana.Pu
 	}
 }
 
-func (c *Client) GetNonceAccountHash(ctx context.Context, nonce solana.PublicKey) (*solana.Hash, error) {
+func (c *Client) GetNonceAccountHash(ctx context.Context, nonce solana.PublicKey) (*solana.Hash, uint64, error) {
 	account, err := c.rpcGetAccount(ctx, nonce, rpc.CommitmentFinalized)
 	if err != nil {
-		return nil, fmt.Errorf("solana.GetAccountInfo() => %v", err)
+		return nil, 0, fmt.Errorf("solana.GetAccountInfo() => %v", err)
 	}
 	if account == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	var nonceAccountData system.NonceAccount
 	err = bin.NewBinDecoder(account.Value.Data.GetBinary()).Decode(&nonceAccountData)
 	if err != nil {
-		return nil, fmt.Errorf("solana.NewBinDecoder() => %v", err)
+		return nil, 0, fmt.Errorf("solana.NewBinDecoder() => %v", err)
 	}
 	hash := solana.Hash(nonceAccountData.Nonce)
-	return &hash, nil
+	return &hash, account.Context.Slot, nil
 }
 
 func (c *Client) GetMint(ctx context.Context, mint solana.PublicKey) (*token.Mint, error) {

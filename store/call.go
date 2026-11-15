@@ -550,7 +550,9 @@ func (s *SQLite3Store) ListUnsignedCalls(ctx context.Context) ([]*SystemCall, er
 }
 
 func (s *SQLite3Store) ListSignedCalls(ctx context.Context) (map[string][]*SystemCall, error) {
-	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE state=? AND signature IS NOT NULL ORDER BY created_at ASC LIMIT 100", strings.Join(systemCallCols, ","))
+	// Older executed calls may be waiting for cleanup nonces. Include later
+	// calls that can free those nonces, and keep each Main with its Prepare.
+	query := fmt.Sprintf("SELECT %s FROM system_calls WHERE state=? AND signature IS NOT NULL ORDER BY created_at ASC", strings.Join(systemCallCols, ","))
 	calls, err := s.listSystemCallsByQuery(ctx, query, common.RequestStatePending)
 	if err != nil {
 		return nil, err

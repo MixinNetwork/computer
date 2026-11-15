@@ -168,15 +168,18 @@ func (node *Node) checkNonceAccounts(ctx context.Context) error {
 		panic(err)
 	}
 	for _, nonce := range ns {
-		hash, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
+		hash, slot, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
 		if err != nil {
 			panic(err)
 		}
-		if hash.String() == nonce.Hash {
+		if hash == nil {
+			return fmt.Errorf("nonce account missing: %s", nonce.Address)
+		}
+		if slot < nonce.HashSlot || hash.String() == nonce.Hash {
 			continue
 		}
 		logger.Printf("solana.checkNonceAccount(%s) => %s %s", nonce.Account().Address, nonce.Account().Hash, hash.String())
-		err = node.store.UpdateNonceAccount(ctx, nonce.Address, hash.String(), "")
+		err = node.store.UpdateNonceAccount(ctx, nonce, hash.String(), slot, "")
 		if err != nil {
 			panic(err)
 		}
@@ -220,7 +223,7 @@ func (node *Node) releaseNonceAccountLoop(ctx context.Context) {
 	for {
 		err := node.releaseNonceAccounts(ctx)
 		if err != nil {
-			panic(err)
+			logger.Printf("node.releaseNonceAccounts() => %v", err)
 		}
 
 		time.Sleep(loopInterval)
@@ -263,7 +266,7 @@ func (node *Node) unconfirmedWithdrawalLoop(ctx context.Context) {
 func (node *Node) unconfirmedCallLoop(ctx context.Context) {
 	for {
 		err := node.handleUnconfirmedCalls(ctx)
-		if errors.Is(err, store.ErrNoSpareNonceAccount) {
+		if nonceRetryable(err) {
 			logger.Printf("prepare calls waiting for a spare nonce")
 		} else if err != nil {
 			panic(err)
@@ -432,11 +435,11 @@ func (node *Node) createNonceAccounts(ctx context.Context) error {
 	if requested.Add(10 * time.Second).After(time.Now().UTC()) {
 		return nil
 	}
-	address, hash, err := node.CreateNonceAccount(ctx, count)
+	address, hash, slot, err := node.CreateNonceAccount(ctx, count)
 	if err != nil {
 		return fmt.Errorf("node.CreateNonceAccount() => %v", err)
 	}
-	err = node.store.WriteNonceAccount(ctx, address, hash)
+	err = node.store.WriteNonceAccount(ctx, address, hash, slot)
 	if err != nil {
 		return fmt.Errorf("store.WriteNonceAccount(%s %s) => %v", address, hash, err)
 	}
@@ -444,98 +447,117 @@ func (node *Node) createNonceAccounts(ctx context.Context) error {
 }
 
 func (node *Node) releaseNonceAccounts(ctx context.Context) error {
-	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
-	as, err := node.store.ListLockedNonceAccounts(ctx)
+	// Catch up accepted proposals before classifying missing calls as abandoned.
+	if !node.synced(ctx) {
+		return nil
+	}
+	accounts, err := node.store.ListLockedNonceAccounts(ctx)
 	if err != nil {
 		return err
 	}
-	for _, nonce := range as {
-		if nonce.LockedByUserOnly() && nonce.Expired() {
-			node.releaseLockedNonceAccount(ctx, nonce)
-			continue
+	var failures []error
+	for _, nonce := range accounts {
+		if err := node.releaseNonceAccount(ctx, nonce); err != nil {
+			failures = append(failures, fmt.Errorf("nonce %s: %w", nonce.Address, err))
 		}
+	}
+	return errors.Join(failures...)
+}
 
-		call, err := node.store.ReadSystemCallByRequestId(ctx, nonce.CallId.String, 0)
-		if err != nil {
-			return err
+func (node *Node) releaseNonceAccount(ctx context.Context, nonce *store.NonceAccount) error {
+	if nonce.LockedByUserOnly() && nonce.Expired() {
+		return node.releaseLockedNonceAccount(ctx, nonce)
+	}
+	call, err := node.store.ReadSystemCallByRequestId(ctx, nonce.CallId.String, 0)
+	if err != nil {
+		return err
+	}
+	// An accepted Main keeps its nonce while it waits for Prepare.
+	if call != nil && call.Type == store.CallTypeMain && call.State == common.RequestStateInitial && call.NonceAccount == nonce.Address {
+		return nil
+	}
+	if call == nil || call.State == common.RequestStateInitial {
+		if nonce.Expired() {
+			return node.releaseLockedNonceAccount(ctx, nonce)
 		}
-		if call == nil || call.State == common.RequestStateInitial {
-			if nonce.Expired() {
-				node.releaseLockedNonceAccount(ctx, nonce)
-			}
-			continue
-		}
-		if nonce.Address != call.NonceAccount {
-			node.releaseLockedNonceAccount(ctx, nonce)
-			continue
-		}
-		switch call.State {
-		case common.RequestStateDone, common.RequestStateFailed:
-		default:
-			continue
-		}
+		return nil
+	}
+	if nonce.Address != call.NonceAccount {
+		return node.releaseLockedNonceAccount(ctx, nonce)
+	}
+	switch call.State {
+	case common.RequestStatePending, common.RequestStateDone, common.RequestStateFailed:
+	default:
+		return nil
+	}
 
-		// release nonce account that is occupied by unconfirmed solana tx
-		if call.State == common.RequestStateFailed && call.RequestId != "035d4b18-451d-336c-abf1-ee9909f4e931" {
-			tx, err := solana.TransactionFromBase64(call.Raw)
-			if err != nil {
-				panic(err)
-			}
-			_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
-			if err != nil {
-				panic(err)
-			}
-			rpcTx, err := node.RPCGetTransaction(ctx, tx.Signatures[0].String())
-			if err != nil {
-				panic(err)
-			}
-			if rpcTx == nil {
-				node.releaseLockedNonceAccount(ctx, nonce)
-				continue
-			}
-			if rpcTx.Meta.Err == nil {
-				panic(fmt.Errorf("invalid nonce to release: %s %s %s", call.RequestId, nonce.Address, tx.Signatures[0].String()))
-			}
-		}
+	hash, slot, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
+	if err != nil {
+		return err
+	}
+	if hash == nil {
+		return fmt.Errorf("nonce account missing: %s", nonce.Address)
+	}
+	if slot < nonce.HashSlot {
+		return fmt.Errorf("%w: nonce RPC slot %d < %d", store.ErrNonceAccountChanged, slot, nonce.HashSlot)
+	}
+	if hash.String() != nonce.Hash {
+		// The finalized nonce has advanced, including on execution failure.
+		// Free it even if MTG confirmation is waiting for a cleanup nonce.
+		return node.store.UpdateNonceAccount(ctx, nonce, hash.String(), slot, call.RequestId)
+	}
+	if call.State == common.RequestStatePending {
+		return nil
+	}
+	if nonce.UpdatedBy.Valid && nonce.UpdatedBy.String == call.RequestId {
+		return node.store.ReleaseNonceAccountAfterCall(ctx, nonce, call)
+	}
+	if call.State == common.RequestStateDone {
+		// Finalized account state can lag transaction confirmation. Check the
+		// remaining accounts now, then retry this one on the next pass.
+		return nil
+	}
 
-		if nonce.UpdatedBy.Valid && nonce.UpdatedBy.String == call.RequestId {
-			node.releaseLockedNonceAccount(ctx, nonce)
-			continue
-		}
-		for {
-			newNonceHash, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
-			if err != nil {
-				panic(err)
-			}
-			if newNonceHash.String() == nonce.Hash {
-				time.Sleep(time.Second)
-				continue
-			}
-			err = node.store.UpdateNonceAccount(ctx, nonce.Address, newNonceHash.String(), call.RequestId)
-			logger.Printf("store.UpdateNonceAccount(%s %s %s) => %v", nonce.Address, newNonceHash.String(), call.RequestId, err)
-			if err != nil {
-				panic(err)
-			}
-			break
-		}
+	// A failed Main may never have been submitted (for example, Prepare
+	// failed first). Only that case can release an unchanged nonce.
+	tx, err := solana.TransactionFromBase64(call.Raw)
+	if err != nil {
+		return err
+	}
+	payer := solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)
+	if _, err := tx.PartialSign(solanaApp.BuildSignersGetter(payer)); err != nil {
+		return err
+	}
+	rpcTx, err := node.RPCGetTransaction(ctx, tx.Signatures[0].String())
+	if err != nil {
+		return err
+	}
+	if rpcTx == nil {
+		return node.store.ReleaseNonceAccountAfterCall(ctx, nonce, call)
+	}
+	if rpcTx.Meta.Err == nil {
+		return fmt.Errorf("successful transaction for failed call: %s", call.RequestId)
 	}
 	return nil
 }
 
-func (node *Node) releaseLockedNonceAccount(ctx context.Context, nonce *store.NonceAccount) {
+func (node *Node) releaseLockedNonceAccount(ctx context.Context, nonce *store.NonceAccount) error {
 	logger.Printf("observer.releaseLockedNonceAccount(%v)", nonce)
-	hash, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
+	hash, slot, err := node.solana.GetNonceAccountHash(ctx, nonce.Account().Address)
 	if err != nil {
-		panic(err)
+		return err
+	}
+	if hash == nil {
+		return fmt.Errorf("nonce account missing: %s", nonce.Address)
+	}
+	if slot < nonce.HashSlot {
+		return fmt.Errorf("%w: nonce RPC slot %d < %d", store.ErrNonceAccountChanged, slot, nonce.HashSlot)
 	}
 	if hash.String() != nonce.Hash {
-		panic(fmt.Errorf("observer.releaseLockedNonceAccount(%s) => inconsistent hash %s %s ",
-			nonce.Address, nonce.Hash, hash.String()))
+		// Re-read on the next pass rather than clearing an uncertain owner.
+		return fmt.Errorf("inconsistent nonce hash: %s %s %s", nonce.Address, nonce.Hash, hash.String())
 	}
-	err = node.store.ReleaseLockedNonceAccount(ctx, nonce.Address)
-	if err != nil {
-		panic(err)
-	}
+	return node.store.ReleaseLockedNonceAccount(ctx, nonce)
 }
 
 func (node *Node) handleFeeInfo(ctx context.Context) error {
@@ -619,6 +641,18 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 	}
 	for _, call := range calls {
 		logger.Printf("observer.handleUnconfirmedCall(%s)", call.RequestId)
+		// Leave cleanup capacity for the earlier Main that this call must wait for.
+		previous, err := node.store.CheckUnfinishedPreviousMainCalls(ctx, call)
+		if err != nil {
+			return err
+		}
+		if previous {
+			continue
+		}
+		user, err := node.store.ReadUser(ctx, call.UserIdFromPublicPath())
+		if err != nil {
+			return err
+		}
 		nonce, err := node.store.ReadNonceAccount(ctx, call.NonceAccount)
 		if err != nil {
 			return err
@@ -629,7 +663,9 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 		extra = append(extra, uuid.Must(uuid.FromString(call.RequestId)).Bytes()...)
 
 		failureReason := ""
-		if nonce == nil || !nonce.Valid(call.RequestId) {
+		retryId := ""
+		var proposalNonce *store.NonceAccount
+		if user == nil || nonce == nil || !nonce.Valid(call.RequestId) || nonce.Mix.String != user.MixAddress {
 			failureReason = "expired or invalid nonce"
 		} else {
 			req, err := node.store.ReadRequestByHash(ctx, call.RequestHash)
@@ -650,6 +686,9 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			nonceHash := solana.MustHashFromBase58(nonce.Hash)
 			extra = append(extra, nonceHash[:]...)
 			err = node.OccupyNonceAccountByCall(ctx, nonce, call.RequestId)
+			if errors.Is(err, store.ErrNonceAccountChanged) {
+				continue // Revalidate the current reservation on the next pass.
+			}
 			if err != nil {
 				return err
 			}
@@ -662,6 +701,13 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			sent, retry, err := node.resendNonceProposal(ctx, id, prepareNonce)
+			if err != nil {
+				return err
+			} else if sent {
+				continue
+			}
+			retryId = retry
 			prepareTx, err := node.CreatePrepareTransaction(ctx, call, prepareNonce, fee)
 			if errors.Is(err, solanaApp.ErrTransactionTooLarge) {
 				failureReason = err.Error()
@@ -670,6 +716,7 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 
 			if prepareTx != nil {
+				proposalNonce = prepareNonce
 				tb, err := prepareTx.MarshalBinary()
 				if err != nil {
 					panic(err)
@@ -690,11 +737,19 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			}
 		}
 
-		err = node.sendObserverTransactionToGroup(ctx, &common.Operation{
+		op := &common.Operation{
 			Id:    id,
 			Type:  OperationTypeConfirmNonce,
 			Extra: extra,
-		}, nil)
+		}
+		if proposalNonce != nil {
+			err = node.sendObserverTransactionWithNonce(ctx, op, proposalNonce)
+		} else {
+			if retryId != "" {
+				op.Id = common.UniqueId(op.Id, retryId)
+			}
+			err = node.sendObserverTransactionToGroup(ctx, op, nil)
+		}
 		if err != nil {
 			return err
 		}
@@ -751,7 +806,7 @@ func (node *Node) handleSignedCalls(ctx context.Context) error {
 	for key, calls := range callSequence {
 		wg.Go(func() {
 			err := node.handleSignedCallSequence(ctx, key, calls)
-			if errors.Is(err, store.ErrNoSpareNonceAccount) {
+			if nonceRetryable(err) {
 				logger.Printf("cleanup for %s waiting for a spare nonce", key)
 			} else if err != nil {
 				panic(err)
@@ -904,7 +959,9 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCall, txx *solana.Transaction, meta *rpc.TransactionMeta, records []confirmCallRecord) error {
 	logger.Printf("node.processSuccessedCall(%s)", call.RequestId)
 	id := common.UniqueId(call.RequestId, "confirm-success")
+	retryId := ""
 	extra := encodeConfirmCallRecords(records)
+	var proposalNonce *store.NonceAccount
 
 	if call.Type == store.CallTypeMain && !call.SkipPostProcess {
 		cid := common.UniqueId(id, "post-process")
@@ -912,8 +969,14 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 		if err != nil {
 			return err
 		}
+		sent, retry, err := node.resendNonceProposal(ctx, id, nonce)
+		if sent || err != nil {
+			return err
+		}
+		retryId = retry
 		tx := node.CreatePostProcessTransaction(ctx, call, nonce, txx, meta)
 		if tx != nil {
+			proposalNonce = nonce
 			data, err := tx.MarshalBinary()
 			if err != nil {
 				panic(err)
@@ -933,6 +996,12 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 	case store.CallTypeDeposit, store.CallTypePostProcess:
 		return node.handleBurnSystemCall(ctx, call, op)
 	default:
+		if proposalNonce != nil {
+			return node.sendObserverTransactionWithNonce(ctx, op, proposalNonce)
+		}
+		if retryId != "" {
+			op.Id = common.UniqueId(op.Id, retryId)
+		}
 		return node.sendObserverTransactionToGroup(ctx, op, nil)
 	}
 }
@@ -944,6 +1013,7 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 	failed.Hash = sql.NullString{Valid: true, String: signature.String()}
 	call = &failed
 	id := common.UniqueId(call.RequestId, "confirm-fail")
+	retryId := ""
 	cid := common.UniqueId(id, "post-process")
 	records := append(successful, confirmCallRecord{
 		Status:    FlagConfirmCallFail,
@@ -951,12 +1021,18 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 		Signature: signature,
 	})
 	extra := encodeConfirmCallRecords(records)
+	var proposalNonce *store.NonceAccount
 
 	if call.Type == store.CallTypeMain || call.Type == store.CallTypePrepare {
 		nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
 		if err != nil {
 			return err
 		}
+		sent, retry, err := node.resendNonceProposal(ctx, id, nonce)
+		if sent || err != nil {
+			return err
+		}
+		retryId = retry
 		var tx *solana.Transaction
 		if call.Type == store.CallTypeMain {
 			tx = node.CreatePostProcessTransaction(ctx, call, nonce, nil, nil)
@@ -968,6 +1044,7 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 			tx = node.CreateRefundWithdrawalTransaction(ctx, call, superior, nonce)
 		}
 		if tx != nil {
+			proposalNonce = nonce
 			data, err := tx.MarshalBinary()
 			if err != nil {
 				panic(err)
@@ -983,11 +1060,18 @@ func (node *Node) processFailedCall(ctx context.Context, call *store.SystemCall,
 		return err
 	}
 
-	return node.sendObserverTransactionToGroup(ctx, &common.Operation{
+	op := &common.Operation{
 		Id:    id,
 		Type:  OperationTypeConfirmCall,
 		Extra: extra,
-	}, nil)
+	}
+	if proposalNonce != nil {
+		return node.sendObserverTransactionWithNonce(ctx, op, proposalNonce)
+	}
+	if retryId != "" {
+		op.Id = common.UniqueId(op.Id, retryId)
+	}
+	return node.sendObserverTransactionToGroup(ctx, op, nil)
 }
 
 func (node *Node) handleBurnSystemCall(ctx context.Context, call *store.SystemCall, op *common.Operation) error {
@@ -1048,13 +1132,7 @@ func (node *Node) handlePendingBurns(ctx context.Context) error {
 }
 
 func (node *Node) OccupyNonceAccountByCall(ctx context.Context, nonce *store.NonceAccount, cid string) error {
-	if nonce.CallId.Valid {
-		if nonce.CallId.String == cid {
-			return nil
-		}
-		panic(fmt.Errorf("inconsistent call id: %s %s", nonce.CallId.String, cid))
-	}
-	return node.store.OccupyNonceAccountByCall(ctx, nonce.Address, cid)
+	return node.store.OccupyNonceAccountByCall(ctx, nonce, cid)
 }
 
 func (node *Node) refreshAssets(ctx context.Context) error {
