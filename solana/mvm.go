@@ -703,14 +703,13 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 	}
 
 	// For situation 1, 4
-	return node.confirmMainOrPrepareSystemCalls(ctx, req, calls, storage)
+	return node.confirmMainOrPrepareSystemCalls(ctx, req, calls, storage, transactions[len(transactions)-1])
 }
 
-func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *store.Request, calls []*store.SystemCall, storage []byte) ([]*mtg.Transaction, string) {
+func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *store.Request, calls []*store.SystemCall, storage []byte, mainResult *rpc.GetTransactionResult) ([]*mtg.Transaction, string) {
 	call := calls[len(calls)-1]
 
 	var session *store.Session
-	var post *store.SystemCall
 	if call.Type != store.CallTypeMain {
 		return node.failRequest(ctx, req, "")
 	}
@@ -718,7 +717,7 @@ func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *stor
 	if err != nil {
 		panic(err)
 	}
-	post, err = node.getPostProcessCall(ctx, req, FlagConfirmCallSuccess, call, storage)
+	post, err := node.getPostProcessCall(ctx, req, call, storage, mainResult, outputs)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")
@@ -1120,7 +1119,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	}
 
 	var session *store.Session
-	post, err := node.getPostProcessCall(ctx, req, FlagConfirmCallFail, referenceCall, storage)
+	post, err := node.getPostProcessCall(ctx, req, referenceCall, storage, nil, nil)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")
@@ -1306,7 +1305,15 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 			user.ChainAddress = "5YLSixqjK2m8ECirGaco8tHSn2Uc4aY7cLPoMSMptsgG"
 		}
 	}
-	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
+	err = node.processTransactionWithAddressLookups(ctx, tx)
+	if err != nil {
+		panic(err)
+	}
+	changes, err := buildUserBalanceChangesFromMeta(tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
+	if err != nil {
+		logger.Printf("burn settlement %s: %v", signature, err)
+		return node.failRequest(ctx, req, "")
+	}
 
 	totals, err := node.burnAssetAmounts(ctx, solanaApp.ExtractBurnsFromTransaction(ctx, tx))
 	if err != nil {

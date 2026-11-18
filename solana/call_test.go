@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	"github.com/MixinNetwork/mixin/crypto"
+	"github.com/MixinNetwork/multi-party-sig/pkg/math/curve"
+	"github.com/MixinNetwork/multi-party-sig/protocols/frost"
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
@@ -506,9 +509,160 @@ func TestSOLConfirmationFixture(t *testing.T) {
 			require.NoError(err)
 			require.NotNil(balance)
 			require.EqualValues(1_000_000_000, *balance)
-			changes := node.buildUserBalanceChangesFromMeta(ctx, tx, result.Meta, source)
+			changes, err := buildUserBalanceChangesFromMeta(tx, result.Meta, source)
+			require.NoError(err)
 			require.True(changes[solanaApp.SolanaEmptyAddress].Amount.IsZero())
 		}
+	}
+}
+
+func TestConfirmMainRequiresPostProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		income      uint64
+		skip        bool
+		lookup      bool
+		requirePost bool
+	}{
+		{name: "no cleanup"},
+		{name: "dust exemption", income: 99_999},
+		{name: "rent exemption", income: 800_000},
+		{name: "user opt-out", income: 300_000, skip: true},
+		{name: "cleanup required", income: 300_000, requirePost: true},
+		{name: "cleanup required with historical lookup", income: 300_000, lookup: true, requirePost: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := common.EnableTestEnvironment(t.Context())
+			node, db := testBuildNode(ctx, require.New(t), t.TempDir(), 0)
+			node.solana = nil
+			t.Cleanup(func() {
+				require.NoError(t, node.store.Close())
+				require.NoError(t, db.Close())
+			})
+			requestSequence := node.conf.MTG.Genesis.Epoch
+			newRequest := func(action byte, extra []byte) *store.Request {
+				out := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), action, extra)
+				requestSequence += 10
+				out.Sequence = requestSequence
+				out.TestAttachActionToGroup(node.group)
+				req, err := node.parseObserverRequest(out)
+				require.NoError(t, err)
+				require.NoError(t, node.store.WriteRequestIfNotExist(ctx, req))
+				return req
+			}
+
+			master, share, ok := strings.Cut(testFROSTKeys1[node.id], ";")
+			require.True(t, ok)
+			key := frost.EmptyConfig(curve.Edwards25519{})
+			require.NoError(t, key.UnmarshalBinary(common.DecodeHexOrPanic(share)))
+			// The legacy test share predates child key derivation.
+			key.ChainKey = make([]byte, 32)
+			encoded, err := key.MarshalBinary()
+			require.NoError(t, err)
+			require.NoError(t, node.store.TestWriteKey(ctx, common.UniqueId("prepare", master), master, encoded, false))
+			user := &store.User{UserId: store.StartUserId.String(), Public: master}
+			main := newRequest(OperationTypeSystemCall, nil)
+			call := &store.SystemCall{
+				RequestId: main.Id, Superior: main.Id, RequestHash: main.MixinHash.String(),
+				Type: store.CallTypeMain, State: common.RequestStatePending, SkipPostProcess: tc.skip,
+				Public: hex.EncodeToString(user.FingerprintWithPath()), CreatedAt: main.CreatedAt,
+			}
+			source := node.getUserSolanaPublicKeyFromCall(ctx, call)
+			mix := bot.NewUUIDMixAddress([]string{uuid.Must(uuid.NewV4()).String()}, 1)
+			register := newRequest(OperationTypeAddUser, nil)
+			require.NoError(t, node.store.WriteUserWithRequest(ctx, register, user.UserId, mix.String(), source.String(), master))
+
+			payer, entry := node.SolanaPayer(), solana.MPK(node.conf.SolanaDepositEntry)
+			options := []solana.TransactionOption{solana.TransactionPayer(payer)}
+			if tc.lookup {
+				options = append(options, solana.TransactionAddressTables(map[solana.PublicKey]solana.PublicKeySlice{
+					{3}: {source},
+				}))
+			}
+			tx, err := solana.NewTransaction([]solana.Instruction{
+				system.NewTransferInstruction(tc.income, payer, source).Build(),
+			}, solana.Hash{}, options...)
+			require.NoError(t, err)
+			_, err = tx.PartialSign(solanaApp.BuildSignersGetter(solana.MustPrivateKeyFromBase58(node.conf.SolanaKey)))
+			require.NoError(t, err)
+			signature := tx.Signatures[0]
+			msg, err := tx.Message.MarshalBinary()
+			require.NoError(t, err)
+			call.MessageHash, call.Raw = crypto.Sha256Hash(msg).String(), tx.MustToBase64()
+			require.NoError(t, node.store.WriteInitialSystemCallWithRequest(ctx, main, call, nil))
+			count := len(tx.Message.AccountKeys) + tx.Message.NumLookups()
+			meta := &rpc.TransactionMeta{PreBalances: make([]uint64, count), PostBalances: make([]uint64, count)}
+			sourceIndex := 1
+			if tc.lookup {
+				// No live lookup table is supplied to the validator.
+				require.Equal(t, 1, tx.Message.NumWritableLookups())
+				sourceIndex = len(tx.Message.AccountKeys)
+				meta.LoadedAddresses.Writable = solana.PublicKeySlice{source}
+			} else {
+				require.Equal(t, source, tx.Message.AccountKeys[sourceIndex])
+			}
+			meta.PreBalances[sourceIndex], meta.PostBalances[sourceIndex] = 1_000_000-tc.income, 1_000_000
+			result, err := json.Marshal(map[string]any{"transaction": []string{tx.MustToBase64(), "base64"}, "meta": meta})
+			require.NoError(t, err)
+			require.NoError(t, node.store.WriteCache(ctx, "getTransaction:"+signature.String(), hex.EncodeToString(result)))
+
+			confirm := func(extra []byte, state byte) *store.Request {
+				req := newRequest(OperationTypeConfirmCall, extra)
+				payments, compaction := node.processConfirmCall(ctx, req)
+				require.Empty(t, payments)
+				require.Empty(t, compaction)
+				stored, err := node.store.ReadRequest(ctx, req.Id)
+				require.NoError(t, err)
+				require.EqualValues(t, state, stored.State)
+				return req
+			}
+			extra := encodeConfirmCallRecords([]confirmCallRecord{{Status: FlagConfirmCallSuccess, CallId: call.RequestId, Signature: signature}})
+			if !tc.requirePost {
+				confirm(extra, common.RequestStateDone)
+				stored, err := node.store.ReadSystemCallByRequestId(ctx, call.RequestId, 0)
+				require.NoError(t, err)
+				require.EqualValues(t, common.RequestStateDone, stored.State)
+				return
+			}
+
+			rejected := confirm(extra, common.RequestStateFailed)
+			stored, err := node.store.ReadSystemCallByRequestId(ctx, call.RequestId, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, common.RequestStatePending, stored.State)
+			require.False(t, stored.Hash.Valid)
+			if tc.lookup {
+				confirmed, _, err := node.handleSignedCall(ctx, stored)
+				require.NoError(t, err)
+				require.Equal(t, signature, confirmed.Signatures[0])
+			}
+
+			nonce := solana.PublicKey{8}
+			post, err := solana.NewTransaction([]solana.Instruction{
+				system.NewAdvanceNonceAccountInstruction(nonce, solana.SysVarRecentBlockHashesPubkey, payer).Build(),
+				system.NewTransferInstruction(tc.income, source, entry).Build(),
+			}, solana.Hash{}, solana.TransactionPayer(payer))
+			require.NoError(t, err)
+			post.Signatures = make([]solana.Signature, post.Message.Header.NumRequiredSignatures)
+			raw, err := post.MarshalBinary()
+			require.NoError(t, err)
+			cid := common.UniqueId(common.UniqueId(call.RequestId, "confirm-success"), "post-process")
+			corrected := attachSystemCall(extra, cid, raw)
+			accepted := confirm(corrected, common.RequestStateDone)
+			require.NotEqual(t, rejected.Id, accepted.Id)
+			stored, err = node.store.ReadSystemCallByRequestId(ctx, call.RequestId, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, common.RequestStateDone, stored.State)
+			require.Equal(t, signature.String(), stored.Hash.String)
+
+			confirm(corrected, common.RequestStateFailed)
+			cleanup, err := node.store.ReadSystemCallByRequestId(ctx, cid, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, common.RequestStatePending, cleanup.State)
+			require.Equal(t, call.RequestId, cleanup.Superior)
+			session, err := node.store.ReadSession(ctx, cid)
+			require.NoError(t, err)
+			require.Equal(t, accepted.MixinHash.String(), session.MixinHash)
+		})
 	}
 }
 

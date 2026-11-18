@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -863,20 +864,14 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 	if err != nil {
 		panic(err)
 	}
-	err = node.processTransactionWithAddressLookups(ctx, tx)
-	if err != nil {
-		panic(err)
-	}
 	_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
 	if err != nil {
 		panic(err)
 	}
 
-	index, err := solanaApp.GetSignatureIndexOfAccount(*tx, publicKey)
-	if err != nil {
-		panic(err)
-	}
-	if tx.IsSigner(publicKey) && index >= 0 {
+	// Signers are static keys, so a retry can recover the original signature
+	// and read its confirmation even after a lookup table has closed.
+	if index := slices.Index(tx.Message.Signers(), publicKey); index >= 0 {
 		sig, err := base64.StdEncoding.DecodeString(call.Signature.String)
 		if err != nil {
 			panic(err)
@@ -919,6 +914,9 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
+			// Keep confirmation retries stable even when the cleanup fee changes.
+			// A confirmation with cleanup has its own trace ID.
+			id = common.UniqueId(id, "with-post-process")
 		} else if err := node.store.ReleaseNonceAccountForCall(ctx, nonce.Address, cid); err != nil {
 			return err
 		}

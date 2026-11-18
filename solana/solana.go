@@ -74,23 +74,17 @@ func (node *Node) cleanupSOLBalance(ctx context.Context, call *store.SystemCall,
 		}
 		meta = result.Meta
 	}
-	if err := node.processTransactionWithAddressLookups(ctx, tx); err != nil {
-		return nil, err
-	}
-	accounts, err := tx.AccountMetaList()
+	index, err := confirmedTransactionAccountIndex(tx, meta, source)
 	if err != nil {
 		return nil, err
 	}
-	for index, account := range accounts {
-		if account.PublicKey != source {
-			continue
-		}
-		if index >= len(meta.PostBalances) {
-			return nil, fmt.Errorf("missing cleanup source balance: %s", source)
-		}
-		return &meta.PostBalances[index], nil
+	if index < 0 {
+		return nil, nil
 	}
-	return nil, nil
+	if index >= len(meta.PostBalances) {
+		return nil, fmt.Errorf("missing cleanup source balance: %s", source)
+	}
+	return &meta.PostBalances[index], nil
 }
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
@@ -616,7 +610,10 @@ func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.
 
 	user := node.getUserSolanaPublicKeyFromCall(ctx, call)
 	if source != nil && meta != nil {
-		changes := node.buildUserBalanceChangesFromMeta(ctx, source, meta, user)
+		changes, err := buildUserBalanceChangesFromMeta(source, meta, user)
+		if err != nil {
+			panic(err)
+		}
 		for address, change := range changes {
 			old := assets[address]
 			if old != nil {
@@ -921,20 +918,41 @@ func (node *Node) processTransactionWithAddressLookups(ctx context.Context, txx 
 	return nil
 }
 
-func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, user solana.PublicKey) map[string]*BalanceChange {
-	err := node.processTransactionWithAddressLookups(ctx, tx)
-	if err != nil {
-		panic(err)
+// Confirmed balance arrays index static keys followed by loaded writable and
+// read-only keys. The snapshot identifies them even if a lookup table closed.
+func confirmedTransactionAccountIndex(tx *solana.Transaction, meta *rpc.TransactionMeta, key solana.PublicKey) (int, error) {
+	message := &tx.Message
+	index := slices.Index(message.AccountKeys, key)
+	if message.IsResolved() || message.NumLookups() == 0 {
+		return index, nil
 	}
-	as, err := tx.AccountMetaList()
+	loaded := meta.LoadedAddresses
+	writable := message.NumWritableLookups()
+	if len(loaded.Writable) != writable || len(loaded.ReadOnly) != message.NumLookups()-writable {
+		return -1, fmt.Errorf("incomplete confirmed lookup addresses")
+	}
+	if index >= 0 {
+		return index, nil
+	}
+	if i := slices.Index(loaded.Writable, key); i >= 0 {
+		return len(message.AccountKeys) + i, nil
+	}
+	if i := slices.Index(loaded.ReadOnly, key); i >= 0 {
+		return len(message.AccountKeys) + writable + i, nil
+	}
+	return -1, nil
+}
+
+func buildUserBalanceChangesFromMeta(tx *solana.Transaction, meta *rpc.TransactionMeta, user solana.PublicKey) (map[string]*BalanceChange, error) {
+	index, err := confirmedTransactionAccountIndex(tx, meta, user)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	changes := make(map[string]*BalanceChange)
-	for index, account := range as {
-		if !account.PublicKey.Equals(user) {
-			continue
+	if index >= 0 {
+		if index >= len(meta.PreBalances) || index >= len(meta.PostBalances) {
+			return nil, fmt.Errorf("missing confirmed user balance: %s", user)
 		}
 		change := decimal.NewFromUint64(meta.PostBalances[index]).Sub(decimal.NewFromUint64(meta.PreBalances[index]))
 		change = change.Div(decimal.New(1, solanaApp.SolanaDecimal))
@@ -974,7 +992,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		}
 		changes[address] = c
 	}
-	return changes
+	return changes, nil
 }
 
 func (node *Node) checkInternalAccountsFromMeta(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta) bool {
