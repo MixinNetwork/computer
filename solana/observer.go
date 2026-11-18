@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -636,7 +637,7 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+			os, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 			if err != nil {
 				return err
 			}
@@ -863,20 +864,14 @@ func (node *Node) handleSignedCall(ctx context.Context, call *store.SystemCall) 
 	if err != nil {
 		panic(err)
 	}
-	err = node.processTransactionWithAddressLookups(ctx, tx)
-	if err != nil {
-		panic(err)
-	}
 	_, err = tx.PartialSign(solanaApp.BuildSignersGetter(payer))
 	if err != nil {
 		panic(err)
 	}
 
-	index, err := solanaApp.GetSignatureIndexOfAccount(*tx, publicKey)
-	if err != nil {
-		panic(err)
-	}
-	if tx.IsSigner(publicKey) && index >= 0 {
+	// Signers are static keys, so a retry can recover the original signature
+	// and read its confirmation even after a lookup table has closed.
+	if index := slices.Index(tx.Message.Signers(), publicKey); index >= 0 {
 		sig, err := base64.StdEncoding.DecodeString(call.Signature.String)
 		if err != nil {
 			panic(err)
@@ -919,6 +914,9 @@ func (node *Node) processSuccessedCall(ctx context.Context, call *store.SystemCa
 				panic(err)
 			}
 			extra = attachSystemCall(extra, cid, data)
+			// Keep confirmation retries stable even when the cleanup fee changes.
+			// A confirmation with cleanup has its own trace ID.
+			id = common.UniqueId(id, "with-post-process")
 		} else if err := node.store.ReleaseNonceAccountForCall(ctx, nonce.Address, cid); err != nil {
 			return err
 		}
@@ -1114,16 +1112,15 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 	if len(bs) == 0 {
 		panic(call)
 	}
-	for _, burn := range bs {
-		address := burn.GetMintAccount().PublicKey.String()
-		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
-		if err != nil || da == nil {
-			panic(err)
-		}
-		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		balance := node.getMtgAssetUnspentBalance(ctx, da.AssetId)
-		if balance.Cmp(amount) < 0 {
-			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, da.AssetId, amount.String(), balance.String())
+	totals, err := node.burnAssetAmounts(ctx, bs)
+	if err != nil {
+		panic(err)
+	}
+	for _, total := range totals {
+		assetID := total.asset.AssetId
+		balance := node.getMtgAssetUnspentBalance(ctx, assetID)
+		if balance.Cmp(total.amount) < 0 {
+			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, assetID, total.amount, balance)
 			return false
 		}
 	}

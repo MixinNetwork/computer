@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS user_outputs (
 );
 
 CREATE INDEX IF NOT EXISTS outputs_by_user_hash_state_created ON user_outputs(user_id, transaction_hash, state, created_at);
+CREATE INDEX IF NOT EXISTS outputs_by_signed_by ON user_outputs(signed_by);
 
 
 CREATE TABLE IF NOT EXISTS nonce_accounts (

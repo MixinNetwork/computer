@@ -21,6 +21,7 @@ import (
 	"github.com/MixinNetwork/safe/mtg"
 	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,78 @@ func TestDepositScannerWSOL(t *testing.T) {
 
 func TestDepositScannerNonceExhaustion(t *testing.T) {
 	testDepositScannerMint(t, solana.MPK(solanaApp.WrappedSolanaAddress), solanaApp.SolanaDecimal, false, true)
+}
+
+func TestNativeSOLDepositAmounts(t *testing.T) {
+	ctx := common.EnableTestEnvironment(t.Context())
+	st, err := store.OpenSQLite3Store(filepath.Join(t.TempDir(), "sol-deposit.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	payer := solana.NewWallet()
+	sender, user, group := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	master := hex.EncodeToString(group.Bytes())
+	require.NoError(t, st.TestWriteKey(ctx, "group-key", master, nil, true))
+	req := &store.Request{
+		Id: "sol-deposit-user", Role: RequestRoleUser, Action: OperationTypeAddUser,
+		State: common.RequestStateInitial, CreatedAt: time.Now().UTC(), Output: &mtg.Action{},
+	}
+	req.Output.OutputId = req.Id
+	require.NoError(t, st.WriteRequestIfNotExist(ctx, req))
+	require.NoError(t, st.WriteUserWithRequest(ctx, req, store.StartUserId.String(), "sol-deposit-mix", user.String(), master))
+	node := &Node{store: st, conf: &Configuration{SolanaKey: payer.PrivateKey.String(), SolanaDepositEntry: group.String()}}
+
+	for index, test := range []struct {
+		name    string
+		amounts []uint64
+		balance uint64
+		want    uint64
+	}{
+		{name: "single eligible transfer", amounts: []uint64{solanaCleanupDustLamports}, balance: solanaCleanupRentLamports + solanaCleanupDustLamports, want: solanaCleanupDustLamports},
+		{name: "small and large transfers", amounts: []uint64{50_000, 3_000_000}, balance: 3_050_000, want: 3_050_000},
+		{name: "split transfers reach minimum", amounts: []uint64{60_000, 40_000}, balance: solanaCleanupRentLamports + 100_000, want: 100_000},
+		{name: "combined amount is dust", amounts: []uint64{60_000, 39_999}, balance: solanaCleanupRentLamports + 99_999},
+		{name: "combined transfer leaves insufficient rent", amounts: []uint64{60_000, 40_000}, balance: solanaCleanupRentLamports + 99_999},
+		{name: "incoming amount already spent", amounts: []uint64{3_000_000}, balance: solanaCleanupRentLamports},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var instructions []solana.Instruction
+			for _, amount := range test.amounts {
+				instructions = append(instructions, system.NewTransferInstruction(amount, sender, user).Build())
+			}
+			source, err := solana.NewTransaction(instructions, solana.Hash{}, solana.TransactionPayer(sender))
+			require.NoError(t, err)
+			signature := solana.Signature{byte(index + 1)}
+			source.Signatures = []solana.Signature{signature}
+			meta := &rpc.TransactionMeta{PostBalances: make([]uint64, len(source.Message.AccountKeys))}
+			for i, account := range source.Message.AccountKeys {
+				if account == user {
+					meta.PostBalances[i] = test.balance
+					break
+				}
+			}
+			result, err := json.Marshal(map[string]any{"transaction": []string{source.MustToBase64(), "base64"}, "meta": meta})
+			require.NoError(t, err)
+			require.NoError(t, st.WriteCache(ctx, "getTransaction:"+signature.String(), hex.EncodeToString(result)))
+
+			incoming, err := solanaApp.ExtractTransfersFromTransaction(ctx, source, meta, nil)
+			require.NoError(t, err)
+			transfers, err := node.buildSolanaDepositTransfers(ctx, source, meta, incoming)
+			require.NoError(t, err)
+			proposal := []solana.Instruction{solana.NewInstruction(solana.MemoProgramID, nil, []byte("deposit fixture"))}
+			if test.want == 0 {
+				require.Empty(t, transfers)
+			} else {
+				require.Len(t, transfers[user.String()], 1)
+				sweep := transfers[user.String()][0]
+				require.Equal(t, test.want, sweep.Amount)
+				require.Equal(t, solanaApp.SolanaChainBase, sweep.AssetId)
+				proposal = append(proposal, system.NewTransferInstruction(sweep.Amount, user, sweep.Destination).Build())
+			}
+			cleanup, err := solana.NewTransaction(proposal, solana.Hash{}, solana.TransactionPayer(payer.PublicKey()))
+			require.NoError(t, err)
+			require.NoError(t, node.compareDepositCallWithSolanaTx(ctx, cleanup, signature.String(), user.String()))
+		})
+	}
 }
 
 func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8, missing, waitForNonce bool) {
@@ -157,7 +230,7 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 		if waitForNonce {
 			require.NoError(t, node.writeBlockCheckpoint(ctx, 99))
 			for range 2 {
-				err := node.solanaReadBlocks(ctx, 99, 101, 2_039_280)
+				err := node.solanaReadBlocks(ctx, 99, 101)
 				require.ErrorIs(t, err, store.ErrNoSpareNonceAccount)
 				checkpoint, err := st.ReadProperty(ctx, store.SolanaScanHeightKey)
 				require.NoError(t, err)
@@ -172,7 +245,7 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 		nonce := solana.NewWallet().PublicKey()
 		require.NoError(t, st.WriteNonceAccount(ctx, nonce.String(), solana.Hash{}.String()))
 
-		require.NoError(t, node.solanaReadBlocks(ctx, 99, 101, 2_039_280))
+		require.NoError(t, node.solanaReadBlocks(ctx, 99, 101))
 		checkpoint, err := st.ReadProperty(ctx, store.SolanaScanHeightKey)
 		require.NoError(t, err)
 		require.Equal(t, "101", checkpoint)
@@ -220,7 +293,7 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 		require.NoError(t, err)
 		require.True(t, reserved.CallId.Valid)
 		// Re-reading a processed block must not create a second deposit call.
-		require.NoError(t, node.solanaReadBlock(ctx, 100, 2_039_280))
+		require.NoError(t, node.solanaReadBlock(ctx, 100))
 		require.Empty(t, network.mtgChannel(node.id))
 
 		// An unfinished block can be retried after one of its deposits has
@@ -231,7 +304,7 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 			State: common.RequestStateDone, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 		}))
 		require.NoError(t, st.UpdateNonceAccount(ctx, nonce.String(), solana.Hash{1}.String(), reserved.CallId.String))
-		require.NoError(t, node.solanaProcessTransaction(ctx, tx, meta, 2_039_280))
+		require.NoError(t, node.solanaProcessTransaction(ctx, tx, meta))
 		spare, err := st.CountSpareNonceAccounts(ctx)
 		require.NoError(t, err)
 		require.Equal(t, 1, spare)
@@ -241,7 +314,7 @@ func testDepositScannerMint(t *testing.T, mint solana.PublicKey, decimals uint8,
 	// Missing mint data must fail the block on every attempt, without caching
 	// the absence or marking the deposit's block as successfully processed.
 	for range 2 {
-		err := node.solanaReadBlock(ctx, 100, 2_039_280)
+		err := node.solanaReadBlock(ctx, 100)
 		require.ErrorIs(t, err, rpc.ErrNotFound)
 		require.ErrorContains(t, err, mint.String())
 		require.ErrorContains(t, err, tx.Signatures[0].String())

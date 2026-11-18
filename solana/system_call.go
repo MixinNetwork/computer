@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	mc "github.com/MixinNetwork/mixin/common"
@@ -22,6 +23,7 @@ import (
 	tokenAta "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/system"
+	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -45,9 +47,7 @@ func systemCallReferenceOutputStateValue(state int64) byte {
 	return common.RequestStatePending
 }
 
-// should only return error when mtg could not find outputs from referenced transaction
-// all assets needed in system call should be referenced
-// extra amount of XIN is used for fees in system call like rent
+// Resolve a new call's deposit and storage references before locking outputs.
 func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, requestHash string, state byte) ([]*store.UserOutput, *crypto.Hash, error) {
 	var outputs []*store.UserOutput
 	req, err := node.store.ReadRequestByHash(ctx, requestHash)
@@ -92,6 +92,34 @@ func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, reques
 		}
 	}
 	return outputs, storage, nil
+}
+
+// Main owns the input locks for Prepare, PostProcess, and refund processing.
+func (node *Node) getLockedSystemCallOutputs(ctx context.Context, main *store.SystemCall, state byte) ([]*store.UserOutput, error) {
+	outputs, err := node.store.ListUserOutputsBySignedBy(ctx, main.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	uid := main.UserIdFromPublicPath()
+	assets := make(map[string]*bot.AssetNetwork)
+	for _, output := range outputs {
+		if output.UserId != uid || output.State != state {
+			return nil, fmt.Errorf("invalid locked output %s for call %s: user %s, state %d", output.OutputId, main.RequestId, output.UserId, output.State)
+		}
+		asset := assets[output.AssetId]
+		if asset == nil {
+			asset, err = common.SafeReadAssetUntilSufficient(ctx, output.AssetId, node.SafeUser())
+			if err != nil {
+				return nil, err
+			}
+			if asset == nil {
+				return nil, fmt.Errorf("missing asset %s for locked output %s", output.AssetId, output.OutputId)
+			}
+			assets[output.AssetId] = asset
+		}
+		output.Asset = *asset
+	}
+	return outputs, nil
 }
 
 func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string, state byte) ([]*store.UserOutput, *crypto.Hash, error) {
@@ -332,8 +360,9 @@ func (node *Node) getSystemCallFeeFromXIN(ctx context.Context, call *store.Syste
 	}, nil
 }
 
-func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, flag byte, call *store.SystemCall, data []byte) (*store.SystemCall, error) {
-	if len(data) == 0 {
+// mainResult and outputs come from validation of a successful Main confirmation.
+func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, call *store.SystemCall, data []byte, mainResult *rpc.GetTransactionResult, outputs []*store.UserOutput) (*store.SystemCall, error) {
+	if len(data) == 0 && (mainResult == nil || call.SkipPostProcess) {
 		return nil, nil
 	}
 	switch call.Type {
@@ -342,15 +371,7 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, nil
 	}
 
-	post, tx, err := node.getSubSystemCallFromExtra(ctx, req, data)
-	if err != nil || post == nil {
-		return nil, err
-	}
-	post.Superior = call.Superior
-	post.Type = store.CallTypePostProcess
-	post.Public = call.Public
-	post.State = common.RequestStatePending
-
+	var err error
 	main := call
 	if call.Type == store.CallTypePrepare {
 		main, err = node.store.ReadSystemCallByRequestId(ctx, call.Superior, 0)
@@ -366,37 +387,49 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 	if user == nil {
 		return nil, fmt.Errorf("store.ReadUser(%s) => nil", main.UserIdFromPublicPath())
 	}
-	mtgDeposit := solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
-	authority := node.getUserSolanaPublicKeyFromCall(ctx, post)
-	if call.Type == store.CallTypePrepare {
-		authority = node.getMTGAddress(ctx)
-	}
-	err = node.VerifySubSystemCallEnvelope(tx, authority, true)
-	logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", post.RequestId, err)
-	if err != nil {
-		return nil, err
-	}
-	// Cleanup must never mint, even when the mint destination is the user's ATA.
-	err = node.verifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress), false)
-	logger.Printf("node.verifySubSystemCall(%s) => %v", user.ChainAddress, err)
-	if err != nil {
-		return nil, err
+
+	var post *store.SystemCall
+	var tx *solana.Transaction
+	if len(data) > 0 {
+		post, tx, err = node.getSubSystemCallFromExtra(ctx, req, data)
+		if err != nil {
+			return nil, err
+		}
+		if post == nil {
+			return nil, fmt.Errorf("missing post-process transaction: %s", call.RequestId)
+		}
+		post.Superior = call.Superior
+		post.Type = store.CallTypePostProcess
+		post.Public = call.Public
+		post.State = common.RequestStatePending
+
+		authority := node.getUserSolanaPublicKeyFromCall(ctx, post)
+		if call.Type == store.CallTypePrepare {
+			authority = node.getMTGAddress(ctx)
+		}
+		err = node.VerifySubSystemCallEnvelope(tx, authority, true)
+		logger.Printf("node.VerifySubSystemCallEnvelope(%s) => %v", post.RequestId, err)
+		if err != nil {
+			return nil, err
+		}
+		// Cleanup must never mint, even when the mint destination is the user's ATA.
+		mtgDeposit := solana.MustPublicKeyFromBase58(node.conf.SolanaDepositEntry)
+		err = node.verifySubSystemCall(ctx, tx, mtgDeposit, solana.MustPublicKeyFromBase58(user.ChainAddress), false)
+		logger.Printf("node.verifySubSystemCall(%s) => %v", user.ChainAddress, err)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(main.State))
-	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
-	}
-	ras := node.GetSystemCallRelatedAsset(ctx, os)
-
-	switch flag {
-	case FlagConfirmCallSuccess:
-		err = node.comparePostCallWithSolanaTx(ctx, ras, tx, main.Hash.String, user.ChainAddress)
+	// main call successed
+	if mainResult != nil {
+		ras := node.GetSystemCallRelatedAsset(ctx, outputs)
+		err = node.comparePostCallWithSolanaTx(ctx, ras, tx, mainResult, user.ChainAddress)
 		logger.Printf("node.comparePostCallWithSolanaTx(%s %s) => %v", main.Hash.String, user.ChainAddress, err)
 		if err != nil {
 			return nil, err
 		}
-	case FlagConfirmCallFail:
+	} else {
 		err = node.verifyFailedPostProcessCall(ctx, call, main, post, tx)
 		logger.Printf("node.verifyFailedPostProcessCall(%s) => %v", call.RequestId, err)
 		if err != nil {
@@ -794,19 +827,8 @@ func addPrepareMovement(m map[string]*big.Int, movement prepareMovement, amount 
 	m[key].Add(m[key], amount)
 }
 
-func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*ReferencedTxAsset, tx *solana.Transaction, signature, user string) error {
-	rpcTx, err := node.RPCGetTransaction(ctx, signature)
-	if err != nil || rpcTx == nil {
-		panic(fmt.Errorf("solana.RPCGetTransaction(%s) => %v %v", signature, rpcTx, err))
-	}
-	if rpcTx.Meta.Err != nil {
-		return fmt.Errorf("node.RPCGetTransaction(%s) => %s", signature, formatTransactionError(rpcTx.Meta.Err))
-	}
+func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*ReferencedTxAsset, tx *solana.Transaction, rpcTx *rpc.GetTransactionResult, user string) error {
 	utx, err := rpcTx.Transaction.GetTransaction()
-	if err != nil {
-		panic(err)
-	}
-	err = node.processTransactionWithAddressLookups(ctx, utx)
 	if err != nil {
 		panic(err)
 	}
@@ -822,7 +844,10 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 			addExpectedSystemCallMovement(expectedBurns, a)
 		}
 	}
-	cs := node.buildUserBalanceChangesFromMeta(ctx, utx, rpcTx.Meta, solana.MPK(user))
+	cs, err := buildUserBalanceChangesFromMeta(utx, rpcTx.Meta, solana.MPK(user))
+	if err != nil {
+		return err
+	}
 	for address, change := range cs {
 		if old := expectedTransfers[address]; old != nil {
 			old.Amount = old.Amount.Add(change.Amount)
@@ -863,9 +888,14 @@ func (node *Node) comparePostCallWithSolanaTx(ctx context.Context, as []*Referen
 		}
 	}
 
-	actualTransfers, actualBurns, err := buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
-	if err != nil {
-		return err
+	// An omitted PostProcess proposes zero transfers and burns. It must pass
+	// the same amount and exemption checks as a supplied transaction.
+	var actualTransfers, actualBurns map[string]*solanaApp.InitialAssetMovement
+	if tx != nil {
+		actualTransfers, actualBurns, err = buildInitialAssetMovementMaps(tx, "", node.SolanaPayer().String())
+		if err != nil {
+			return err
+		}
 	}
 	var solBalance *uint64
 	expectedSOL := expectedTransfers[solanaApp.SolanaEmptyAddress]
@@ -930,7 +960,7 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	if err != nil {
 		panic(err)
 	}
-	expectedChanges, err := node.parseSolanaBlockBalanceChanges(ctx, transfers)
+	expectedChanges, err := node.solanaDepositAmounts(ctx, dtx, rpcTx.Meta, transfers)
 	if err != nil {
 		panic(err)
 	}
@@ -958,7 +988,7 @@ func (node *Node) collectExpectedDepositMovements(ctx context.Context, expectedC
 	expectedBurns := make(map[string]*big.Int)
 	changes := filterExpectedDepositChangesByUser(expectedChanges, user)
 	for address, expected := range changes {
-		if node.shouldSkipExpectedDepositMovement(ctx, address, expected) {
+		if node.shouldSkipDepositMovement(ctx, address) {
 			continue
 		}
 
@@ -981,17 +1011,6 @@ func filterExpectedDepositChangesByUser(expectedChanges map[string]*big.Int, use
 		changes[address] = addBigInt(changes[address], expected)
 	}
 	return changes
-}
-
-func (node *Node) shouldSkipExpectedDepositMovement(ctx context.Context, address string, expected *big.Int) bool {
-	if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
-		return true
-	}
-	isNFT, err := node.RPCCheckNFT(ctx, address)
-	if err != nil {
-		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
-	}
-	return isNFT
 }
 
 func addExpectedSystemCallMovement(m map[string]*ReferencedTxAsset, asset *ReferencedTxAsset) {
@@ -1130,7 +1149,7 @@ func (node *Node) compareDepositMovements(ctx context.Context, signature string,
 	}
 	for address, movement := range actual {
 		if expected[address] == nil {
-			if node.shouldSkipDepositMovement(ctx, address, movement.Value) {
+			if node.shouldSkipDepositMovement(ctx, address) {
 				continue
 			}
 			return fmt.Errorf("unexpected %s deposit: %s %s %s %s", kind, signature, address, movement.Value.String(), tx.MustToBase64())
@@ -1139,10 +1158,7 @@ func (node *Node) compareDepositMovements(ctx context.Context, signature string,
 	return nil
 }
 
-func (node *Node) shouldSkipDepositMovement(ctx context.Context, address string, value *big.Int) bool {
-	if address == solanaApp.SolanaEmptyAddress && value.Uint64() < 10 {
-		return true
-	}
+func (node *Node) shouldSkipDepositMovement(ctx context.Context, address string) bool {
 	isNFT, err := node.RPCCheckNFT(ctx, address)
 	if err != nil {
 		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
