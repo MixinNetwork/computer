@@ -1354,17 +1354,31 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		ids = append(ids, tx.TraceId)
 	}
 
-	fd, err := node.store.ReadFailedDepositByHash(ctx, signature)
+	deposits, err := node.store.ListUnconfirmedDepositsByHash(ctx, signature)
 	if err != nil {
 		panic(err)
 	}
-	if fd != nil {
-		id := common.UniqueId(fd.Hash, fmt.Sprint(fd.Index))
+	// One payment per asset lets all of its deposits draw from the same
+	// Mixin inputs, which cannot be reused by a second payment in this action.
+	depositAmounts := make(map[string]decimal.Decimal, len(deposits))
+	for _, deposit := range deposits {
+		depositAmounts[deposit.AssetId] = depositAmounts[deposit.AssetId].Add(decimal.RequireFromString(deposit.Amount))
+	}
+	for _, deposit := range deposits {
+		amount, exists := depositAmounts[deposit.AssetId]
+		if !exists {
+			continue
+		}
+		delete(depositAmounts, deposit.AssetId)
+
+		// In index order, the first deposit provides the payment trace. A
+		// single deposit keeps the same trace as the normal deposit path.
+		id := common.UniqueId(deposit.Hash, fmt.Sprint(deposit.Index))
 		id = common.UniqueId(id, node.SolanaDepositEntry().String())
-		memo := []byte(fd.Hash)
-		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, fd.AssetId, mix.Members(), int(mix.Threshold), fd.Amount, memo, id)
+		memo := []byte(deposit.Hash)
+		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, deposit.AssetId, mix.Members(), int(mix.Threshold), amount.String(), memo, id)
 		if tx == nil {
-			return node.failRequest(ctx, req, fd.AssetId)
+			return node.failRequest(ctx, req, deposit.AssetId)
 		}
 		txs = append(txs, tx)
 		ids = append(ids, tx.TraceId)
@@ -1374,7 +1388,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	old = append(old, ids...)
 	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
-	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, fd, txs)
+	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, deposits, txs)
 	if err != nil {
 		panic(err)
 	}

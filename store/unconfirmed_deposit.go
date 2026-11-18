@@ -25,9 +25,6 @@ var unconfirmedDepositCols = []string{"output_id", "mixin_hash", "mixin_index", 
 func unconfirmedDepositFromRow(row Row) (*UnconfirmedDeposit, error) {
 	var d UnconfirmedDeposit
 	err := row.Scan(&d.OutputId, &d.Hash, &d.Index, &d.AssetId, &d.Amount, &d.HandledBy, &d.CreatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
 	return &d, err
 }
 
@@ -53,9 +50,21 @@ func (s *SQLite3Store) handleFailedDepositByRequest(ctx context.Context, tx *sql
 	return nil
 }
 
-func (s *SQLite3Store) ReadFailedDepositByHash(ctx context.Context, hash string) (*UnconfirmedDeposit, error) {
-	query := fmt.Sprintf("SELECT %s FROM unconfirmed_deposits WHERE mixin_hash=?", strings.Join(unconfirmedDepositCols, ","))
-	row := s.db.QueryRowContext(ctx, query, hash)
+func (s *SQLite3Store) ListUnconfirmedDepositsByHash(ctx context.Context, hash string) ([]*UnconfirmedDeposit, error) {
+	query := fmt.Sprintf("SELECT %s FROM unconfirmed_deposits WHERE mixin_hash=? AND handled_by IS NULL ORDER BY mixin_index, output_id", strings.Join(unconfirmedDepositCols, ","))
+	rows, err := s.db.QueryContext(ctx, query, hash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	return unconfirmedDepositFromRow(row)
+	var deposits []*UnconfirmedDeposit
+	for rows.Next() {
+		deposit, err := unconfirmedDepositFromRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		deposits = append(deposits, deposit)
+	}
+	return deposits, rows.Err()
 }

@@ -276,7 +276,7 @@ func (s *SQLite3Store) ConfirmSystemCallsWithRequest(ctx context.Context, req *R
 	return tx.Commit()
 }
 
-func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Context, req *Request, call *SystemCall, deposit *UnconfirmedDeposit, txs []*mtg.Transaction) error {
+func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Context, req *Request, call *SystemCall, deposits []*UnconfirmedDeposit, txs []*mtg.Transaction) error {
 	switch call.Type {
 	case CallTypePostProcess, CallTypeDeposit:
 	default:
@@ -304,7 +304,7 @@ func (s *SQLite3Store) ConfirmBurnRelatedSystemCallWithRequest(ctx context.Conte
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
 
-	if deposit != nil {
+	for _, deposit := range deposits {
 		err = s.handleFailedDepositByRequest(ctx, tx, deposit, req)
 		if err != nil {
 			return err
