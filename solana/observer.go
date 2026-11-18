@@ -1114,16 +1114,15 @@ func (node *Node) checkSufficientBalanceForBurnSystemCall(ctx context.Context, c
 	if len(bs) == 0 {
 		panic(call)
 	}
-	for _, burn := range bs {
-		address := burn.GetMintAccount().PublicKey.String()
-		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
-		if err != nil || da == nil {
-			panic(err)
-		}
-		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		balance := node.getMtgAssetUnspentBalance(ctx, da.AssetId)
-		if balance.Cmp(amount) < 0 {
-			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, da.AssetId, amount.String(), balance.String())
+	totals, err := node.burnAssetAmounts(ctx, bs)
+	if err != nil {
+		panic(err)
+	}
+	for _, total := range totals {
+		assetID := total.asset.AssetId
+		balance := node.getMtgAssetUnspentBalance(ctx, assetID)
+		if balance.Cmp(total.amount) < 0 {
+			logger.Printf("insufficient balance to confirm burn system call: %s %s %s %s", call.RequestId, assetID, total.amount, balance)
 			return false
 		}
 	}

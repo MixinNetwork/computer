@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,155 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMergeDepositBurnTransfers(t *testing.T) {
+	mint := solana.PublicKey{1}
+	first := &solanaApp.TokenTransfer{Mint: mint, Amount: 10}
+	native := &solanaApp.TokenTransfer{Mint: solana.PublicKey{2}, Amount: 5, SolanaAsset: true}
+	other := &solanaApp.TokenTransfer{Mint: solana.PublicKey{3}, Amount: 15}
+	second := &solanaApp.TokenTransfer{Mint: mint, Amount: 20}
+
+	merged, err := mergeDepositBurnTransfers([]*solanaApp.TokenTransfer{first, native, other, second, native})
+	require.NoError(t, err)
+	require.Equal(t, []*solanaApp.TokenTransfer{{Mint: mint, Amount: 30}, native, other, native}, merged)
+	require.Equal(t, uint64(10), first.Amount)
+	_, err = mergeDepositBurnTransfers([]*solanaApp.TokenTransfer{{Mint: mint, Amount: math.MaxUint64}, second})
+	require.ErrorContains(t, err, "overflows")
+}
+
+func TestBurnSettlementConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		amounts     []uint64
+		post        string
+		settled     bool
+		postProcess bool
+	}{
+		{name: "single burn", amounts: []uint64{30}, post: "70", settled: true},
+		{name: "multiple burns of one mint", amounts: []uint64{10, 20}, post: "70", settled: true},
+		{name: "post-process burn", amounts: []uint64{30}, post: "70", settled: true, postProcess: true},
+		{name: "different decrease", amounts: []uint64{30}, post: "80"},
+		{name: "unchanged balance", amounts: []uint64{30}, post: "100"},
+		{name: "balance increase", amounts: []uint64{30}, post: "130"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := common.EnableTestEnvironment(t.Context())
+			node, db := testBuildNode(ctx, require.New(t), t.TempDir(), 0)
+			t.Cleanup(func() {
+				require.NoError(t, node.store.Close())
+				require.NoError(t, db.Close())
+			})
+
+			requestSequence := node.conf.MTG.Genesis.Epoch
+			newRequest := func(action byte, extra []byte) *store.Request {
+				out := testBuildObserverRequest(node, uuid.Must(uuid.NewV4()).String(), action, extra)
+				requestSequence += 10
+				out.Sequence = requestSequence
+				out.TestAttachActionToGroup(node.group)
+				req, err := node.parseObserverRequest(out)
+				require.NoError(t, err)
+				require.NoError(t, node.store.WriteRequestIfNotExist(ctx, req))
+				return req
+			}
+
+			const decimals = solanaApp.AssetDecimal
+			mint, user, account := solana.PublicKey{1}, solana.PublicKey{2}, solana.PublicKey{3}
+			asset := &solanaApp.DeployedAsset{AssetId: mtg.StorageAssetId, ChainId: mtg.StorageAssetId, Address: mint.String(), Decimals: decimals}
+			deploy := newRequest(OperationTypeDeployExternalAssets, nil)
+			require.NoError(t, node.store.WriteDeployedAssetsWithRequest(ctx, deploy, []*solanaApp.DeployedAsset{asset}))
+			register := newRequest(OperationTypeAddUser, nil)
+			mix := bot.NewUUIDMixAddress([]string{uuid.Must(uuid.NewV4()).String()}, 1)
+			require.NoError(t, node.store.WriteUserWithRequest(ctx, register, "1", mix.String(), user.String(), ""))
+
+			// Use an offline transaction fixture with an inert signature and cached RPC metadata.
+			builder := solana.NewTransactionBuilder().SetFeePayer(user)
+			for _, amount := range tc.amounts {
+				builder.AddInstruction(token.NewBurnCheckedInstruction(amount, decimals, account, mint, user, nil).Build())
+			}
+			tx, err := builder.Build()
+			require.NoError(t, err)
+			signature := solana.Signature{1}
+			tx.Signatures = []solana.Signature{signature}
+			msg, err := tx.Message.MarshalBinary()
+			require.NoError(t, err)
+			tokenBalance := func(amount string) rpc.TokenBalance {
+				return rpc.TokenBalance{Owner: &user, Mint: mint, UiTokenAmount: &rpc.UiTokenAmount{Amount: amount, Decimals: decimals}}
+			}
+			rpcResult, err := json.Marshal(map[string]any{
+				"transaction": []string{tx.MustToBase64(), "base64"},
+				"meta": &rpc.TransactionMeta{
+					PreBalances:       make([]uint64, len(tx.Message.AccountKeys)),
+					PostBalances:      make([]uint64, len(tx.Message.AccountKeys)),
+					PreTokenBalances:  []rpc.TokenBalance{tokenBalance("100")},
+					PostTokenBalances: []rpc.TokenBalance{tokenBalance(tc.post)},
+				},
+			})
+			require.NoError(t, err)
+			require.NoError(t, node.store.WriteCache(ctx, "getTransaction:"+signature.String(), hex.EncodeToString(rpcResult)))
+
+			deposit := newRequest(OperationTypeDeposit, append(user.Bytes(), signature[:]...))
+			call := &store.SystemCall{
+				RequestId: deposit.Id, Superior: deposit.Id, RequestHash: deposit.MixinHash.String(),
+				Type: store.CallTypeDeposit, State: common.RequestStatePending,
+				Public: "00000000000000000000000000000001", MessageHash: crypto.Sha256Hash(msg).String(), Raw: tx.MustToBase64(),
+				CreatedAt: deposit.CreatedAt,
+			}
+			if tc.postProcess {
+				main := newRequest(OperationTypeSystemCall, nil)
+				mainCall := &store.SystemCall{
+					RequestId: main.Id, Superior: main.Id, RequestHash: main.MixinHash.String(),
+					Type: store.CallTypeMain, State: common.RequestStateDone, Public: call.Public,
+					MessageHash: main.MixinHash.String(), CreatedAt: main.CreatedAt,
+				}
+				require.NoError(t, node.store.WriteInitialSystemCallWithRequest(ctx, main, mainCall, nil))
+				call.Superior = main.Id
+				call.Type = store.CallTypePostProcess
+			}
+			require.NoError(t, node.store.WriteInitialSystemCallWithRequest(ctx, deposit, call, nil))
+			_, err = testWriteOutputForNodes(ctx, []*mtg.SQLite3Store{db}, node.conf.AppId, asset.AssetId, "", "", deposit.Sequence-1, decimal.New(20, -decimals))
+			require.NoError(t, err)
+			require.False(t, node.checkSufficientBalanceForBurnSystemCall(ctx, call))
+			_, err = testWriteOutputForNodes(ctx, []*mtg.SQLite3Store{db}, node.conf.AppId, asset.AssetId, "", "", deposit.Sequence, decimal.NewFromInt(1))
+			require.NoError(t, err)
+			require.True(t, node.checkSufficientBalanceForBurnSystemCall(ctx, call))
+
+			extra := encodeConfirmCallRecords([]confirmCallRecord{{Status: FlagConfirmCallSuccess, CallId: call.RequestId, Signature: signature}})
+			confirm := newRequest(OperationTypeConfirmCall, extra)
+			op := &common.Operation{Id: confirm.Id, Type: OperationTypeConfirmCall, Extra: extra}
+			require.NoError(t, node.store.WritePendingBurnSystemCallIfNotExists(ctx, call, op, []string{asset.AssetId}))
+			payments, compaction := node.processConfirmCall(ctx, confirm)
+			require.Empty(t, compaction)
+			stored, err := node.store.ReadSystemCallByRequestId(ctx, call.RequestId, 0)
+			require.NoError(t, err)
+			require.NoError(t, node.confirmBurnRelatedSystemCallToGroup(ctx, op, stored))
+			pending, _, err := node.store.ListPendingBurnSystemCalls(ctx)
+			require.NoError(t, err)
+			if tc.settled {
+				require.Empty(t, pending)
+				require.Len(t, payments, 1)
+				require.True(t, decimal.RequireFromString(payments[0].Amount).Equal(decimal.New(30, -decimals)))
+				require.EqualValues(t, common.RequestStateDone, stored.State)
+				require.Equal(t, []string{payments[0].TraceId}, stored.GetRefundIds())
+				replayed, compaction := node.ProcessOutput(ctx, confirm.Output)
+				require.Empty(t, compaction)
+				require.Len(t, replayed, 1)
+				require.Equal(t, payments[0].TraceId, replayed[0].TraceId)
+			} else {
+				require.Len(t, pending, 1)
+				require.Equal(t, common.UniqueId(confirm.Id, "RETRY"), pending[0].RequestId)
+				require.Empty(t, payments)
+				require.EqualValues(t, common.RequestStatePending, stored.State)
+				require.Empty(t, stored.GetRefundIds())
+				failed, err := node.store.ReadRequest(ctx, confirm.Id)
+				require.NoError(t, err)
+				require.EqualValues(t, common.RequestStateFailed, failed.State)
+			}
+			payments, compaction = node.processConfirmCall(ctx, newRequest(OperationTypeConfirmCall, extra))
+			require.Empty(t, payments)
+			require.Empty(t, compaction)
+		})
+	}
+}
 
 func TestUserSystemCallFeePayer(t *testing.T) {
 	ctx := context.Background()
@@ -554,7 +704,7 @@ func TestSystemCallPrecisionRefundsAllDeposits(t *testing.T) {
 			for _, output := range outputs {
 				saved := readOutput(output)
 				require.Equal(t, output.Amount, saved.Amount)
-					require.EqualValues(t, common.RequestStateFailed, saved.State)
+				require.EqualValues(t, common.RequestStateFailed, saved.State)
 			}
 			require.EqualValues(t, common.RequestStateInitial, readOutput(unreferenced).State)
 			savedReq, err := node.store.ReadRequest(ctx, req.Id)

@@ -19,6 +19,7 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -1246,6 +1247,41 @@ func (node *Node) validateConfirmCall(ctx context.Context, req *store.Request, s
 	return call, transaction, nil
 }
 
+type burnAssetAmount struct {
+	asset  *solanaApp.DeployedAsset
+	amount decimal.Decimal
+}
+
+// Deposit and post-process calls validate a single user's burn authority before
+// signing. Keep mint order stable so every node constructs payments in the same order.
+func (node *Node) burnAssetAmounts(ctx context.Context, burns []*token.BurnChecked) ([]burnAssetAmount, error) {
+	var totals []burnAssetAmount
+	indexes := make(map[string]int)
+	for _, burn := range burns {
+		if *burn.Amount == 0 {
+			continue
+		}
+		address := burn.GetMintAccount().PublicKey.String()
+		index, exists := indexes[address]
+		if !exists {
+			asset, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+			if err != nil {
+				return nil, err
+			}
+			if asset == nil {
+				return nil, fmt.Errorf("undeployed burn mint: %s", address)
+			}
+			index = len(totals)
+			indexes[address] = index
+			totals = append(totals, burnAssetAmount{asset: asset, amount: decimal.Zero})
+		}
+		total := &totals[index]
+		amount := decimal.NewFromUint64(*burn.Amount).Shift(-int32(total.asset.Decimals))
+		total.amount = total.amount.Add(amount)
+	}
+	return totals, nil
+}
+
 func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, rpcTx *rpc.GetTransactionResult, signature string) ([]*mtg.Transaction, string) {
 	main := call
 	if call.Superior != call.RequestId {
@@ -1275,28 +1311,28 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	}
 	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
 
+	totals, err := node.burnAssetAmounts(ctx, solanaApp.ExtractBurnsFromTransaction(ctx, tx))
+	if err != nil {
+		logger.Printf("burn settlement %s: %v", signature, err)
+		return node.failRequest(ctx, req, "")
+	}
+	for _, total := range totals {
+		change := changes[total.asset.Address]
+		if change == nil || !change.Amount.Neg().Equal(total.amount) {
+			logger.Printf("burn settlement %s: mint %s burned %s with balance change %v", signature, total.asset.Address, total.amount, change)
+			// Fail only this confirmation request. The observer can retry the
+			// pending call with the same confirmed Solana transaction.
+			return node.failRequest(ctx, req, "")
+		}
+	}
+
 	var txs []*mtg.Transaction
 	var ids []string
-	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
-	for _, burn := range bs {
-		address := burn.GetMintAccount().PublicKey.String()
-		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
-		if err != nil || da == nil {
-			panic(err)
-		}
-
-		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		amt := mc.NewIntegerFromString(amount.String())
+	for _, total := range totals {
+		da := total.asset
+		amt := mc.NewIntegerFromString(total.amount.String())
 		if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
 			amt = mc.NewIntegerFromString("0.02")
-		}
-		if amt.Sign() == 0 {
-			continue
-		}
-
-		change := changes[address]
-		if change == nil || !change.Amount.Abs().Equal(amount) {
-			continue
 		}
 
 		id := common.UniqueId(signature, fmt.Sprintf("BURN:%s", da.AssetId))

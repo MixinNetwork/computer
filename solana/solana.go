@@ -393,6 +393,10 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	if len(ts) == 0 {
 		return nil
 	}
+	ts, err = mergeDepositBurnTransfers(ts)
+	if err != nil {
+		return err
+	}
 
 	nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
 	if err != nil {
@@ -413,6 +417,27 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 		Type:  OperationTypeDeposit,
 		Extra: extra,
 	}, nil)
+}
+
+// Each deposit call is already scoped to one recipient. Merge bridge burns by
+// mint, preserving the order of the first occurrence and all Solana-side transfers.
+func mergeDepositBurnTransfers(transfers []*solanaApp.TokenTransfer) ([]*solanaApp.TokenTransfer, error) {
+	merged := make([]*solanaApp.TokenTransfer, 0, len(transfers))
+	burns := make(map[solana.PublicKey]*solanaApp.TokenTransfer)
+	for _, transfer := range transfers {
+		if transfer.SolanaAsset {
+			merged = append(merged, transfer)
+			continue
+		}
+		if burn := burns[transfer.Mint]; burn != nil {
+			burn.Amount += transfer.Amount
+			continue
+		}
+		burn := *transfer
+		burns[transfer.Mint] = &burn
+		merged = append(merged, &burn)
+	}
+	return merged, nil
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
