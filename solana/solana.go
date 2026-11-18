@@ -542,9 +542,9 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 }
 
 func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, fee *store.UserOutput) (*solana.Transaction, error) {
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	os, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 	if err != nil {
-		return nil, fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err)
+		return nil, fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err)
 	}
 	if len(os) == 0 && fee == nil {
 		return nil, nil
@@ -599,9 +599,9 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 }
 
 func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, source *solana.Transaction, meta *rpc.TransactionMeta, comparison *solana.Transaction) *solana.Transaction {
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(call.State))
+	os, err := node.getLockedSystemCallOutputs(ctx, call, systemCallReferenceOutputStateValue(call.State))
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+		panic(fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err))
 	}
 
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
@@ -804,9 +804,9 @@ func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, c
 		return nil
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(prepare.State))
+	os, err := node.getLockedSystemCallOutputs(ctx, call, systemCallReferenceOutputStateValue(prepare.State))
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+		panic(fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err))
 	}
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
 	assets := make(map[string]*ReferencedTxAsset)

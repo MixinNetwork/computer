@@ -110,6 +110,11 @@ func (s *SQLite3Store) ListUserOutputsByHashAndState(ctx context.Context, user_i
 	return s.listUserOutputsByQuery(ctx, query, vals...)
 }
 
+func (s *SQLite3Store) ListUserOutputsBySignedBy(ctx context.Context, callID string) ([]*UserOutput, error) {
+	query := fmt.Sprintf("SELECT %s FROM user_outputs WHERE signed_by=? ORDER BY created_at, transaction_hash, output_index, output_id", strings.Join(userOutputCols, ","))
+	return s.listUserOutputsByQuery(ctx, query, callID)
+}
+
 func (s *SQLite3Store) listUserOutputsByQuery(ctx context.Context, query string, params ...any) ([]*UserOutput, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
@@ -128,5 +133,5 @@ func (s *SQLite3Store) listUserOutputsByQuery(ctx context.Context, query string,
 		}
 		outputs = append(outputs, output)
 	}
-	return outputs, nil
+	return outputs, rows.Err()
 }

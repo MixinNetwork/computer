@@ -343,8 +343,8 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	if err != nil {
 		panic(err)
 	}
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, byte(outputState))
-	logger.Printf("node.GetSystemCallReferenceTxs(%s) => %v %v", req.MixinHash.String(), os, err)
+	os, err := node.getLockedSystemCallOutputs(ctx, call, byte(outputState))
+	logger.Printf("node.getLockedSystemCallOutputs(%s) => %v %v", call.RequestId, os, err)
 	if err != nil {
 		panic(err)
 	}
@@ -710,17 +710,14 @@ func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *stor
 	call := calls[len(calls)-1]
 
 	var session *store.Session
-	var outputs []*store.UserOutput
 	var post *store.SystemCall
 	if call.Type != store.CallTypeMain {
 		return node.failRequest(ctx, req, "")
 	}
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	outputs, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 	if err != nil {
 		panic(err)
 	}
-	outputs = os
-
 	post, err = node.getPostProcessCall(ctx, req, FlagConfirmCallSuccess, call, storage)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
@@ -1115,7 +1112,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(referenceCall.State))
+		os, err := node.getLockedSystemCallOutputs(ctx, main, systemCallReferenceOutputStateValue(referenceCall.State))
 		if err != nil {
 			panic(err)
 		}

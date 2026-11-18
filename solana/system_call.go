@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/MixinNetwork/bot-api-go-client/v3"
 	solanaApp "github.com/MixinNetwork/computer/apps/solana"
 	"github.com/MixinNetwork/computer/store"
 	mc "github.com/MixinNetwork/mixin/common"
@@ -45,9 +46,7 @@ func systemCallReferenceOutputStateValue(state int64) byte {
 	return common.RequestStatePending
 }
 
-// should only return error when mtg could not find outputs from referenced transaction
-// all assets needed in system call should be referenced
-// extra amount of XIN is used for fees in system call like rent
+// Resolve a new call's deposit and storage references before locking outputs.
 func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, requestHash string, state byte) ([]*store.UserOutput, *crypto.Hash, error) {
 	var outputs []*store.UserOutput
 	req, err := node.store.ReadRequestByHash(ctx, requestHash)
@@ -92,6 +91,34 @@ func (node *Node) GetSystemCallReferenceOutputs(ctx context.Context, uid, reques
 		}
 	}
 	return outputs, storage, nil
+}
+
+// Main owns the input locks for Prepare, PostProcess, and refund processing.
+func (node *Node) getLockedSystemCallOutputs(ctx context.Context, main *store.SystemCall, state byte) ([]*store.UserOutput, error) {
+	outputs, err := node.store.ListUserOutputsBySignedBy(ctx, main.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	uid := main.UserIdFromPublicPath()
+	assets := make(map[string]*bot.AssetNetwork)
+	for _, output := range outputs {
+		if output.UserId != uid || output.State != state {
+			return nil, fmt.Errorf("invalid locked output %s for call %s: user %s, state %d", output.OutputId, main.RequestId, output.UserId, output.State)
+		}
+		asset := assets[output.AssetId]
+		if asset == nil {
+			asset, err = common.SafeReadAssetUntilSufficient(ctx, output.AssetId, node.SafeUser())
+			if err != nil {
+				return nil, err
+			}
+			if asset == nil {
+				return nil, fmt.Errorf("missing asset %s for locked output %s", output.AssetId, output.OutputId)
+			}
+			assets[output.AssetId] = asset
+		}
+		output.Asset = *asset
+	}
+	return outputs, nil
 }
 
 func (node *Node) getSystemCallReferenceTx(ctx context.Context, uid, hash string, state byte) ([]*store.UserOutput, *crypto.Hash, error) {
@@ -383,9 +410,9 @@ func (node *Node) getPostProcessCall(ctx context.Context, req *store.Request, fl
 		return nil, err
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(main.State))
+	os, err := node.getLockedSystemCallOutputs(ctx, main, systemCallReferenceOutputStateValue(main.State))
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", main.RequestId, err))
+		panic(fmt.Errorf("read locked outputs for %s: %w", main.RequestId, err))
 	}
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
 

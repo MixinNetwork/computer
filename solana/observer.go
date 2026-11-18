@@ -636,7 +636,7 @@ func (node *Node) handleUnconfirmedCalls(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+			os, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 			if err != nil {
 				return err
 			}

@@ -106,7 +106,7 @@ func (s *SQLite3Store) WriteInitialSystemCallWithRequest(ctx context.Context, re
 	}
 
 	for _, o := range os {
-		query := "UPDATE user_outputs SET state=?, signed_by=?, updated_at=? WHERE output_id=? AND state=? AND user_id=?"
+		query := "UPDATE user_outputs SET state=?, signed_by=?, updated_at=? WHERE output_id=? AND state=? AND user_id=? AND signed_by IS NULL"
 		err = s.execOne(ctx, tx, query, common.RequestStatePending, call.RequestId, req.CreatedAt, o.OutputId, common.RequestStateInitial, call.UserIdFromPublicPath())
 		if err != nil {
 			return fmt.Errorf("SQLite3Store UPDATE user_outputs %v", err)
@@ -208,12 +208,9 @@ func (s *SQLite3Store) RefundOutputsWithRequest(ctx context.Context, req *Reques
 		return fmt.Errorf("SQLite3Store UPDATE system_calls %v", err)
 	}
 
-	for _, o := range os {
-		query := "UPDATE user_outputs SET state=?, updated_at=? WHERE output_id=? AND state=? AND signed_by=?"
-		_, err = tx.ExecContext(ctx, query, common.RequestStateDone, req.CreatedAt, o.OutputId, common.RequestStatePending, call.RequestId)
-		if err != nil {
-			return fmt.Errorf("SQLite3Store UPDATE user_outputs %v", err)
-		}
+	err = s.finishLockedUserOutputs(ctx, tx, req, call.RequestId, os, true)
+	if err != nil {
+		return err
 	}
 
 	err = s.failRequest(ctx, tx, req, txs, compaction)
@@ -260,12 +257,10 @@ func (s *SQLite3Store) ConfirmSystemCallsWithRequest(ctx context.Context, req *R
 		}
 	}
 
-	for _, o := range os {
-		query := "UPDATE user_outputs SET state=?, updated_at=? WHERE output_id=? AND state=?"
-		err = s.execOne(ctx, tx, query, common.RequestStateDone, req.CreatedAt, o.OutputId, common.RequestStatePending)
-		if err != nil {
-			return fmt.Errorf("SQLite3Store UPDATE user_outputs %v", err)
-		}
+	main := calls[len(calls)-1]
+	err = s.finishLockedUserOutputs(ctx, tx, req, main.RequestId, os, false)
+	if err != nil {
+		return err
 	}
 
 	err = s.finishRequest(ctx, tx, req, nil, "")
@@ -413,12 +408,13 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 		}
 	}
 
-	for _, o := range os {
-		query := "UPDATE user_outputs SET state=?, updated_at=? WHERE output_id=? AND state=?"
-		_, err = tx.ExecContext(ctx, query, common.RequestStateDone, req.CreatedAt, o.OutputId, common.RequestStatePending)
-		if err != nil {
-			return fmt.Errorf("SQLite3Store UPDATE user_outputs %v", err)
-		}
+	ownerID := call.RequestId
+	if call.Type == CallTypePrepare {
+		ownerID = call.Superior
+	}
+	err = s.finishLockedUserOutputs(ctx, tx, req, ownerID, os, true)
+	if err != nil {
+		return err
 	}
 
 	// A non-empty compaction means the MTG emitted refund transactions that must
@@ -443,6 +439,24 @@ func (s *SQLite3Store) FailSystemCallWithRequest(ctx context.Context, req *Reque
 	}
 
 	return tx.Commit()
+}
+
+func (s *SQLite3Store) finishLockedUserOutputs(ctx context.Context, tx *sql.Tx, req *Request, callID string, outputs []*UserOutput, allowDone bool) error {
+	state := common.RequestStatePending
+	if allowDone {
+		// Compaction can replay a refund after its inputs were finished.
+		state = common.RequestStateDone
+	}
+	query := `UPDATE user_outputs
+SET state=?, updated_at=CASE WHEN state=? THEN updated_at ELSE ? END
+WHERE output_id=? AND signed_by=? AND state IN (?, ?)`
+	for _, output := range outputs {
+		err := s.execOne(ctx, tx, query, common.RequestStateDone, common.RequestStateDone, req.CreatedAt, output.OutputId, callID, common.RequestStatePending, state)
+		if err != nil {
+			return fmt.Errorf("finish output %s locked by call %s: %w", output.OutputId, callID, err)
+		}
+	}
+	return nil
 }
 
 func (s *SQLite3Store) WriteSignSessionWithRequest(ctx context.Context, req *Request, call *SystemCall, sessions []*Session) error {
