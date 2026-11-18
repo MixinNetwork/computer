@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"math"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -37,12 +36,9 @@ func TestMergeDepositBurnTransfers(t *testing.T) {
 	other := &solanaApp.TokenTransfer{Mint: solana.PublicKey{3}, Amount: 15}
 	second := &solanaApp.TokenTransfer{Mint: mint, Amount: 20}
 
-	merged, err := mergeDepositBurnTransfers([]*solanaApp.TokenTransfer{first, native, other, second, native})
-	require.NoError(t, err)
+	merged := mergeDepositBurnTransfers([]*solanaApp.TokenTransfer{first, native, other, second, native})
 	require.Equal(t, []*solanaApp.TokenTransfer{{Mint: mint, Amount: 30}, native, other, native}, merged)
 	require.Equal(t, uint64(10), first.Amount)
-	_, err = mergeDepositBurnTransfers([]*solanaApp.TokenTransfer{{Mint: mint, Amount: math.MaxUint64}, second})
-	require.ErrorContains(t, err, "overflows")
 }
 
 func TestBurnSettlementConfirmation(t *testing.T) {
