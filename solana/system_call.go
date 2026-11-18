@@ -930,7 +930,7 @@ func (node *Node) compareDepositCallWithSolanaTx(ctx context.Context, tx *solana
 	if err != nil {
 		panic(err)
 	}
-	expectedChanges, err := node.parseSolanaBlockBalanceChanges(ctx, transfers)
+	expectedChanges, err := node.solanaDepositAmounts(ctx, dtx, rpcTx.Meta, transfers)
 	if err != nil {
 		panic(err)
 	}
@@ -958,7 +958,7 @@ func (node *Node) collectExpectedDepositMovements(ctx context.Context, expectedC
 	expectedBurns := make(map[string]*big.Int)
 	changes := filterExpectedDepositChangesByUser(expectedChanges, user)
 	for address, expected := range changes {
-		if node.shouldSkipExpectedDepositMovement(ctx, address, expected) {
+		if node.shouldSkipDepositMovement(ctx, address) {
 			continue
 		}
 
@@ -981,17 +981,6 @@ func filterExpectedDepositChangesByUser(expectedChanges map[string]*big.Int, use
 		changes[address] = addBigInt(changes[address], expected)
 	}
 	return changes
-}
-
-func (node *Node) shouldSkipExpectedDepositMovement(ctx context.Context, address string, expected *big.Int) bool {
-	if address == solanaApp.SolanaEmptyAddress && expected.Uint64() < 10 {
-		return true
-	}
-	isNFT, err := node.RPCCheckNFT(ctx, address)
-	if err != nil {
-		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
-	}
-	return isNFT
 }
 
 func addExpectedSystemCallMovement(m map[string]*ReferencedTxAsset, asset *ReferencedTxAsset) {
@@ -1130,7 +1119,7 @@ func (node *Node) compareDepositMovements(ctx context.Context, signature string,
 	}
 	for address, movement := range actual {
 		if expected[address] == nil {
-			if node.shouldSkipDepositMovement(ctx, address, movement.Value) {
+			if node.shouldSkipDepositMovement(ctx, address) {
 				continue
 			}
 			return fmt.Errorf("unexpected %s deposit: %s %s %s %s", kind, signature, address, movement.Value.String(), tx.MustToBase64())
@@ -1139,10 +1128,7 @@ func (node *Node) compareDepositMovements(ctx context.Context, signature string,
 	return nil
 }
 
-func (node *Node) shouldSkipDepositMovement(ctx context.Context, address string, value *big.Int) bool {
-	if address == solanaApp.SolanaEmptyAddress && value.Uint64() < 10 {
-		return true
-	}
+func (node *Node) shouldSkipDepositMovement(ctx context.Context, address string) bool {
 	isNFT, err := node.RPCCheckNFT(ctx, address)
 	if err != nil {
 		panic(fmt.Errorf("node.RPCCheckNFT(%s) => %v", address, err))
