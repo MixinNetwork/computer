@@ -67,9 +67,9 @@ func (node *Node) checkTransaction(ctx context.Context, act *mtg.Action, assetId
 		}
 		if da != nil {
 			supply := node.RPCMintSupply(ctx, da.Address)
-			balance = node.getMtgAssetUnspentBalance(ctx, da.AssetId)
-			if balance.Sub(amt).Cmp(supply) < 0 {
-				panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s %s", da.AssetId, da.Address, balance, amt, supply))
+			reserve := node.getMtgAssetUnspentAndPendingBalance(ctx, da.AssetId)
+			if reserve.Sub(amt).Cmp(supply) < 0 {
+				panic(fmt.Errorf("invalid balance of mtg asset %s %s: %s %s %s", da.AssetId, da.Address, reserve, amt, supply))
 			}
 		}
 	}
