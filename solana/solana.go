@@ -74,23 +74,17 @@ func (node *Node) cleanupSOLBalance(ctx context.Context, call *store.SystemCall,
 		}
 		meta = result.Meta
 	}
-	if err := node.processTransactionWithAddressLookups(ctx, tx); err != nil {
-		return nil, err
-	}
-	accounts, err := tx.AccountMetaList()
+	index, err := confirmedTransactionAccountIndex(tx, meta, source)
 	if err != nil {
 		return nil, err
 	}
-	for index, account := range accounts {
-		if account.PublicKey != source {
-			continue
-		}
-		if index >= len(meta.PostBalances) {
-			return nil, fmt.Errorf("missing cleanup source balance: %s", source)
-		}
-		return &meta.PostBalances[index], nil
+	if index < 0 {
+		return nil, nil
 	}
-	return nil, nil
+	if index >= len(meta.PostBalances) {
+		return nil, fmt.Errorf("missing cleanup source balance: %s", source)
+	}
+	return &meta.PostBalances[index], nil
 }
 
 func (node *Node) addressLookupTableLoop(ctx context.Context) {
@@ -202,13 +196,8 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 			continue
 		}
 
-		rentExemptBalance, err := node.RPCGetMinimumBalanceForRentExemption(ctx, solanaApp.NormalAccountSize)
-		if err != nil {
-			panic(err)
-		}
-
 		last := min(checkpoint+batch, int64(height)+1-SolanaBlockDelay)
-		err = node.solanaReadBlocks(ctx, checkpoint, last, rentExemptBalance)
+		err = node.solanaReadBlocks(ctx, checkpoint, last)
 		if errors.Is(err, store.ErrNoSpareNonceAccount) {
 			logger.Printf("deposit scanner waiting for a spare nonce at block %d", checkpoint+1)
 			continue
@@ -221,13 +210,13 @@ func (node *Node) solanaRPCBlocksLoop(ctx context.Context) {
 
 // A partial batch keeps its old checkpoint. Completed blocks are cached by
 // solanaReadBlock, so retries resume the unfinished work without skipping it.
-func (node *Node) solanaReadBlocks(ctx context.Context, checkpoint, last int64, rentExemptBalance uint64) error {
+func (node *Node) solanaReadBlocks(ctx context.Context, checkpoint, last int64) error {
 	errs := make([]error, last-checkpoint)
 	var wg sync.WaitGroup
 	for i := range errs {
 		wg.Go(func() {
 			current := checkpoint + int64(i) + 1
-			errs[i] = node.solanaReadBlock(ctx, current, rentExemptBalance)
+			errs[i] = node.solanaReadBlock(ctx, current)
 			logger.Printf("node.solanaReadBlock(%d) => %v", current, errs[i])
 		})
 	}
@@ -247,7 +236,7 @@ func (node *Node) solanaReadBlocks(ctx context.Context, checkpoint, last int64, 
 	return node.writeBlockCheckpoint(ctx, last)
 }
 
-func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExemptBalance uint64) error {
+func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64) error {
 	key := fmt.Sprintf("block:%d", checkpoint)
 	val, err := node.store.ReadCache(ctx, key)
 	if err != nil || val != "" {
@@ -264,7 +253,7 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 	}
 
 	for _, tx := range block.Transactions {
-		err = node.solanaProcessTransaction(ctx, tx.MustGetTransaction(), tx.Meta, rentExemptBalance)
+		err = node.solanaProcessTransaction(ctx, tx.MustGetTransaction(), tx.Meta)
 		if err != nil {
 			return err
 		}
@@ -273,7 +262,7 @@ func (node *Node) solanaReadBlock(ctx context.Context, checkpoint int64, rentExe
 	return node.store.WriteCache(ctx, key, "processed")
 }
 
-func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, rentExemptBalance uint64) error {
+func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta) error {
 	if meta.Err != nil {
 		return nil
 	}
@@ -311,26 +300,42 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 	if err != nil {
 		panic(err)
 	}
-	changes, err := node.parseSolanaBlockBalanceChanges(ctx, transfers)
+	tsMap, err := node.buildSolanaDepositTransfers(ctx, tx, meta, transfers)
 	if err != nil {
-		logger.Printf("node.parseSolanaBlockBalanceChanges(%s, %d) => %d %v",
-			hash, len(transfers), len(changes), err)
-		return err
+		return fmt.Errorf("build solana deposit transfers for %s: %w", hash, err)
 	}
-	if len(changes) == 0 {
-		return nil
+	for user, ts := range tsMap {
+		err = node.solanaProcessDepositTransaction(ctx, hash, user, ts)
+		if err != nil {
+			logger.Printf("node.solanaProcessDepositTransaction(%s) => %v", hash, err)
+			return err
+		}
 	}
+	return nil
+}
 
+func (node *Node) buildSolanaDepositTransfers(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, transfers []*solanaApp.Transfer) (map[string][]*solanaApp.TokenTransfer, error) {
+	amounts, err := node.solanaDepositAmounts(ctx, tx, meta, transfers)
+	if err != nil {
+		return nil, err
+	}
 	tsMap := make(map[string][]*solanaApp.TokenTransfer)
 	for _, transfer := range transfers {
 		key := fmt.Sprintf("%s:%s", transfer.Receiver, transfer.TokenAddress)
-		if _, ok := changes[key]; !ok {
+		total, ok := amounts[key]
+		if !ok {
 			continue
 		}
 
 		isSolAsset := true
 		decimal := uint8(solanaApp.SolanaDecimal)
-		if transfer.TokenAddress != solanaApp.SolanaEmptyAddress {
+		amount := transfer.Value.Uint64()
+		if transfer.TokenAddress == solanaApp.SolanaEmptyAddress {
+			// Emit one native SOL transfer for the eligible total, in the
+			// position of its first occurrence in the incoming transfers.
+			amount = total.Uint64()
+			delete(amounts, key)
+		} else {
 			da, err := node.store.ReadDeployedAssetByAddress(ctx, transfer.TokenAddress)
 			if err != nil {
 				panic(err)
@@ -341,18 +346,12 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 
 			asset, err := node.RPCGetAsset(ctx, transfer.TokenAddress)
 			if err != nil {
-				logger.Printf("solana.RPCGetAsset(%s) => %v", transfer.TokenAddress, err)
-				return err
+				return nil, fmt.Errorf("deposit mint %s: %w", transfer.TokenAddress, err)
 			}
 			if asset == nil {
-				return fmt.Errorf("deposit mint %s for transaction %s: %w", transfer.TokenAddress, hash, rpc.ErrNotFound)
+				return nil, fmt.Errorf("deposit mint %s: %w", transfer.TokenAddress, rpc.ErrNotFound)
 			}
 			decimal = uint8(asset.Decimals)
-		}
-		if transfer.TokenAddress == solanaApp.SolanaEmptyAddress {
-			if transfer.Value.Uint64() < rentExemptBalance {
-				continue
-			}
 		}
 		tsMap[transfer.Receiver] = append(tsMap[transfer.Receiver], &solanaApp.TokenTransfer{
 			SolanaAsset: isSolAsset,
@@ -360,18 +359,11 @@ func (node *Node) solanaProcessTransaction(ctx context.Context, tx *solana.Trans
 			ChainId:     solanaApp.SolanaChainBase,
 			Mint:        solana.MustPublicKeyFromBase58(transfer.TokenAddress),
 			Destination: node.SolanaDepositEntry(),
-			Amount:      transfer.Value.Uint64(),
+			Amount:      amount,
 			Decimals:    decimal,
 		})
 	}
-	for user, ts := range tsMap {
-		err = node.solanaProcessDepositTransaction(ctx, hash, user, ts)
-		if err != nil {
-			logger.Printf("node.solanaProcessDepositTransaction(%s) => %v", hash, err)
-			return err
-		}
-	}
-	return nil
+	return tsMap, nil
 }
 
 func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHash solana.Signature, user string, ts []*solanaApp.TokenTransfer) error {
@@ -393,6 +385,7 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 	if len(ts) == 0 {
 		return nil
 	}
+	ts = mergeDepositBurnTransfers(ts)
 
 	nonce, err := node.store.ReserveNonceAccountForCall(ctx, cid)
 	if err != nil {
@@ -413,6 +406,27 @@ func (node *Node) solanaProcessDepositTransaction(ctx context.Context, depositHa
 		Type:  OperationTypeDeposit,
 		Extra: extra,
 	}, nil)
+}
+
+// Each deposit call is already scoped to one recipient. Merge bridge burns by
+// mint, preserving the order of the first occurrence and all Solana-side transfers.
+func mergeDepositBurnTransfers(transfers []*solanaApp.TokenTransfer) []*solanaApp.TokenTransfer {
+	merged := make([]*solanaApp.TokenTransfer, 0, len(transfers))
+	burns := make(map[solana.PublicKey]*solanaApp.TokenTransfer)
+	for _, transfer := range transfers {
+		if transfer.SolanaAsset {
+			merged = append(merged, transfer)
+			continue
+		}
+		if burn := burns[transfer.Mint]; burn != nil {
+			burn.Amount += transfer.Amount
+			continue
+		}
+		burn := *transfer
+		burns[transfer.Mint] = &burn
+		merged = append(merged, &burn)
+	}
+	return merged
 }
 
 func (node *Node) InitializeAccount(ctx context.Context, account string) error {
@@ -519,9 +533,9 @@ func (node *Node) CreateNonceAccount(ctx context.Context, index int) (string, st
 }
 
 func (node *Node) CreatePrepareTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, fee *store.UserOutput) (*solana.Transaction, error) {
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	os, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 	if err != nil {
-		return nil, fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err)
+		return nil, fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err)
 	}
 	if len(os) == 0 && fee == nil {
 		return nil, nil
@@ -576,9 +590,9 @@ func (node *Node) CreatePostProcessTransaction(ctx context.Context, call *store.
 }
 
 func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.SystemCall, nonce *store.NonceAccount, source *solana.Transaction, meta *rpc.TransactionMeta, comparison *solana.Transaction) *solana.Transaction {
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(call.State))
+	os, err := node.getLockedSystemCallOutputs(ctx, call, systemCallReferenceOutputStateValue(call.State))
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+		panic(fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err))
 	}
 
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
@@ -593,7 +607,10 @@ func (node *Node) createPostProcessTransaction(ctx context.Context, call *store.
 
 	user := node.getUserSolanaPublicKeyFromCall(ctx, call)
 	if source != nil && meta != nil {
-		changes := node.buildUserBalanceChangesFromMeta(ctx, source, meta, user)
+		changes, err := buildUserBalanceChangesFromMeta(source, meta, user)
+		if err != nil {
+			panic(err)
+		}
 		for address, change := range changes {
 			old := assets[address]
 			if old != nil {
@@ -781,9 +798,9 @@ func (node *Node) buildRefundWithdrawalTransfers(ctx context.Context, prepare, c
 		return nil
 	}
 
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, systemCallReferenceOutputStateValue(prepare.State))
+	os, err := node.getLockedSystemCallOutputs(ctx, call, systemCallReferenceOutputStateValue(prepare.State))
 	if err != nil {
-		panic(fmt.Errorf("node.GetSystemCallReferenceTxs(%s) => %v", call.RequestId, err))
+		panic(fmt.Errorf("read locked outputs for %s: %w", call.RequestId, err))
 	}
 	ras := node.GetSystemCallRelatedAsset(ctx, os)
 	assets := make(map[string]*ReferencedTxAsset)
@@ -898,20 +915,41 @@ func (node *Node) processTransactionWithAddressLookups(ctx context.Context, txx 
 	return nil
 }
 
-func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, user solana.PublicKey) map[string]*BalanceChange {
-	err := node.processTransactionWithAddressLookups(ctx, tx)
-	if err != nil {
-		panic(err)
+// Confirmed balance arrays index static keys followed by loaded writable and
+// read-only keys. The snapshot identifies them even if a lookup table closed.
+func confirmedTransactionAccountIndex(tx *solana.Transaction, meta *rpc.TransactionMeta, key solana.PublicKey) (int, error) {
+	message := &tx.Message
+	index := slices.Index(message.AccountKeys, key)
+	if message.IsResolved() || message.NumLookups() == 0 {
+		return index, nil
 	}
-	as, err := tx.AccountMetaList()
+	loaded := meta.LoadedAddresses
+	writable := message.NumWritableLookups()
+	if len(loaded.Writable) != writable || len(loaded.ReadOnly) != message.NumLookups()-writable {
+		return -1, fmt.Errorf("incomplete confirmed lookup addresses")
+	}
+	if index >= 0 {
+		return index, nil
+	}
+	if i := slices.Index(loaded.Writable, key); i >= 0 {
+		return len(message.AccountKeys) + i, nil
+	}
+	if i := slices.Index(loaded.ReadOnly, key); i >= 0 {
+		return len(message.AccountKeys) + writable + i, nil
+	}
+	return -1, nil
+}
+
+func buildUserBalanceChangesFromMeta(tx *solana.Transaction, meta *rpc.TransactionMeta, user solana.PublicKey) (map[string]*BalanceChange, error) {
+	index, err := confirmedTransactionAccountIndex(tx, meta, user)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	changes := make(map[string]*BalanceChange)
-	for index, account := range as {
-		if !account.PublicKey.Equals(user) {
-			continue
+	if index >= 0 {
+		if index >= len(meta.PreBalances) || index >= len(meta.PostBalances) {
+			return nil, fmt.Errorf("missing confirmed user balance: %s", user)
 		}
 		change := decimal.NewFromUint64(meta.PostBalances[index]).Sub(decimal.NewFromUint64(meta.PreBalances[index]))
 		change = change.Div(decimal.New(1, solanaApp.SolanaDecimal))
@@ -951,7 +989,7 @@ func (node *Node) buildUserBalanceChangesFromMeta(ctx context.Context, tx *solan
 		}
 		changes[address] = c
 	}
-	return changes
+	return changes, nil
 }
 
 func (node *Node) checkInternalAccountsFromMeta(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta) bool {
@@ -1161,7 +1199,9 @@ func (node *Node) VerifySubSystemCallEnvelope(tx *solana.Transaction, authority 
 	return nil
 }
 
-func (node *Node) parseSolanaBlockBalanceChanges(ctx context.Context, transfers []*solanaApp.Transfer) (map[string]*big.Int, error) {
+// solanaDepositAmounts is shared by the scanner and deposit call validation.
+// Apply the native SOL policy only after totaling eligible transfers per receiver.
+func (node *Node) solanaDepositAmounts(ctx context.Context, tx *solana.Transaction, meta *rpc.TransactionMeta, transfers []*solanaApp.Transfer) (map[string]*big.Int, error) {
 	mtgAddress := node.getMTGAddress(ctx).String()
 
 	changes := make(map[string]*big.Int)
@@ -1187,6 +1227,32 @@ func (node *Node) parseSolanaBlockBalanceChanges(ctx context.Context, transfers 
 			changes[key] = new(big.Int).Add(total, t.Value)
 		} else {
 			changes[key] = t.Value
+		}
+	}
+	for key, total := range changes {
+		receiver, nativeSOL := strings.CutSuffix(key, ":"+solanaApp.SolanaEmptyAddress)
+		if !nativeSOL {
+			continue
+		}
+		if !total.IsUint64() || isSOLCleanupDust(solanaApp.SolanaChainBase, decimal.NewFromBigInt(total, 0)) {
+			delete(changes, key)
+			continue
+		}
+		balance, err := node.cleanupSOLBalance(ctx, nil, tx, meta, solana.MPK(receiver))
+		if err != nil {
+			return nil, err
+		}
+		// An incoming transfer may have been spent within the same transaction.
+		if balance == nil || *balance < total.Uint64() {
+			delete(changes, key)
+			continue
+		}
+		rentUnsafe, err := isSOLCleanupRentUnsafe(*balance, total.Uint64())
+		if err != nil {
+			return nil, err
+		}
+		if rentUnsafe {
+			delete(changes, key)
 		}
 	}
 	return changes, nil

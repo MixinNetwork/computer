@@ -19,6 +19,7 @@ import (
 	"github.com/MixinNetwork/safe/common"
 	"github.com/MixinNetwork/safe/mtg"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
@@ -342,8 +343,8 @@ func (node *Node) processConfirmNonce(ctx context.Context, req *store.Request) (
 	if err != nil {
 		panic(err)
 	}
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, byte(outputState))
-	logger.Printf("node.GetSystemCallReferenceTxs(%s) => %v %v", req.MixinHash.String(), os, err)
+	os, err := node.getLockedSystemCallOutputs(ctx, call, byte(outputState))
+	logger.Printf("node.getLockedSystemCallOutputs(%s) => %v %v", call.RequestId, os, err)
 	if err != nil {
 		panic(err)
 	}
@@ -702,25 +703,21 @@ func (node *Node) processConfirmCall(ctx context.Context, req *store.Request) ([
 	}
 
 	// For situation 1, 4
-	return node.confirmMainOrPrepareSystemCalls(ctx, req, calls, storage)
+	return node.confirmMainOrPrepareSystemCalls(ctx, req, calls, storage, transactions[len(transactions)-1])
 }
 
-func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *store.Request, calls []*store.SystemCall, storage []byte) ([]*mtg.Transaction, string) {
+func (node *Node) confirmMainOrPrepareSystemCalls(ctx context.Context, req *store.Request, calls []*store.SystemCall, storage []byte, mainResult *rpc.GetTransactionResult) ([]*mtg.Transaction, string) {
 	call := calls[len(calls)-1]
 
 	var session *store.Session
-	var outputs []*store.UserOutput
-	var post *store.SystemCall
 	if call.Type != store.CallTypeMain {
 		return node.failRequest(ctx, req, "")
 	}
-	os, _, err := node.GetSystemCallReferenceOutputs(ctx, call.UserIdFromPublicPath(), call.RequestHash, common.RequestStatePending)
+	outputs, err := node.getLockedSystemCallOutputs(ctx, call, common.RequestStatePending)
 	if err != nil {
 		panic(err)
 	}
-	outputs = os
-
-	post, err = node.getPostProcessCall(ctx, req, FlagConfirmCallSuccess, call, storage)
+	post, err := node.getPostProcessCall(ctx, req, call, storage, mainResult, outputs)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")
@@ -1114,7 +1111,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 			}
 		}
 
-		os, _, err := node.GetSystemCallReferenceOutputs(ctx, main.UserIdFromPublicPath(), main.RequestHash, systemCallReferenceOutputStateValue(referenceCall.State))
+		os, err := node.getLockedSystemCallOutputs(ctx, main, systemCallReferenceOutputStateValue(referenceCall.State))
 		if err != nil {
 			panic(err)
 		}
@@ -1122,7 +1119,7 @@ func (node *Node) failSystemCall(ctx context.Context, req *store.Request, call *
 	}
 
 	var session *store.Session
-	post, err := node.getPostProcessCall(ctx, req, FlagConfirmCallFail, referenceCall, storage)
+	post, err := node.getPostProcessCall(ctx, req, referenceCall, storage, nil, nil)
 	logger.Printf("node.getPostProcessCall(%v %v) => %v %v", req, call, post, err)
 	if err != nil {
 		return node.failRequest(ctx, req, "")
@@ -1246,6 +1243,41 @@ func (node *Node) validateConfirmCall(ctx context.Context, req *store.Request, s
 	return call, transaction, nil
 }
 
+type burnAssetAmount struct {
+	asset  *solanaApp.DeployedAsset
+	amount decimal.Decimal
+}
+
+// Deposit and post-process calls validate a single user's burn authority before
+// signing. Keep mint order stable so every node constructs payments in the same order.
+func (node *Node) burnAssetAmounts(ctx context.Context, burns []*token.BurnChecked) ([]burnAssetAmount, error) {
+	var totals []burnAssetAmount
+	indexes := make(map[string]int)
+	for _, burn := range burns {
+		if *burn.Amount == 0 {
+			continue
+		}
+		address := burn.GetMintAccount().PublicKey.String()
+		index, exists := indexes[address]
+		if !exists {
+			asset, err := node.store.ReadDeployedAssetByAddress(ctx, address)
+			if err != nil {
+				return nil, err
+			}
+			if asset == nil {
+				return nil, fmt.Errorf("undeployed burn mint: %s", address)
+			}
+			index = len(totals)
+			indexes[address] = index
+			totals = append(totals, burnAssetAmount{asset: asset, amount: decimal.Zero})
+		}
+		total := &totals[index]
+		amount := decimal.NewFromUint64(*burn.Amount).Shift(-int32(total.asset.Decimals))
+		total.amount = total.amount.Add(amount)
+	}
+	return totals, nil
+}
+
 func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.Request, call *store.SystemCall, rpcTx *rpc.GetTransactionResult, signature string) ([]*mtg.Transaction, string) {
 	main := call
 	if call.Superior != call.RequestId {
@@ -1273,30 +1305,38 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 			user.ChainAddress = "5YLSixqjK2m8ECirGaco8tHSn2Uc4aY7cLPoMSMptsgG"
 		}
 	}
-	changes := node.buildUserBalanceChangesFromMeta(ctx, tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
+	err = node.processTransactionWithAddressLookups(ctx, tx)
+	if err != nil {
+		panic(err)
+	}
+	changes, err := buildUserBalanceChangesFromMeta(tx, rpcTx.Meta, solana.MPK(user.ChainAddress))
+	if err != nil {
+		logger.Printf("burn settlement %s: %v", signature, err)
+		return node.failRequest(ctx, req, "")
+	}
+
+	totals, err := node.burnAssetAmounts(ctx, solanaApp.ExtractBurnsFromTransaction(ctx, tx))
+	if err != nil {
+		logger.Printf("burn settlement %s: %v", signature, err)
+		return node.failRequest(ctx, req, "")
+	}
+	for _, total := range totals {
+		change := changes[total.asset.Address]
+		if change == nil || !change.Amount.Neg().Equal(total.amount) {
+			logger.Printf("burn settlement %s: mint %s burned %s with balance change %v", signature, total.asset.Address, total.amount, change)
+			// Fail only this confirmation request. The observer can retry the
+			// pending call with the same confirmed Solana transaction.
+			return node.failRequest(ctx, req, "")
+		}
+	}
 
 	var txs []*mtg.Transaction
 	var ids []string
-	bs := solanaApp.ExtractBurnsFromTransaction(ctx, tx)
-	for _, burn := range bs {
-		address := burn.GetMintAccount().PublicKey.String()
-		da, err := node.store.ReadDeployedAssetByAddress(ctx, address)
-		if err != nil || da == nil {
-			panic(err)
-		}
-
-		amount := decimal.New(int64(*burn.Amount), -int32(da.Decimals))
-		amt := mc.NewIntegerFromString(amount.String())
+	for _, total := range totals {
+		da := total.asset
+		amt := mc.NewIntegerFromString(total.amount.String())
 		if common.CheckTestEnvironment(ctx) && req.Id == "329346e1-34c2-4de0-8e35-729518eda8bd" {
 			amt = mc.NewIntegerFromString("0.02")
-		}
-		if amt.Sign() == 0 {
-			continue
-		}
-
-		change := changes[address]
-		if change == nil || !change.Amount.Abs().Equal(amount) {
-			continue
 		}
 
 		id := common.UniqueId(signature, fmt.Sprintf("BURN:%s", da.AssetId))
@@ -1318,17 +1358,31 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 		ids = append(ids, tx.TraceId)
 	}
 
-	fd, err := node.store.ReadFailedDepositByHash(ctx, signature)
+	deposits, err := node.store.ListUnconfirmedDepositsByHash(ctx, signature)
 	if err != nil {
 		panic(err)
 	}
-	if fd != nil {
-		id := common.UniqueId(fd.Hash, fmt.Sprint(fd.Index))
+	// One payment per asset lets all of its deposits draw from the same
+	// Mixin inputs, which cannot be reused by a second payment in this action.
+	depositAmounts := make(map[string]decimal.Decimal, len(deposits))
+	for _, deposit := range deposits {
+		depositAmounts[deposit.AssetId] = depositAmounts[deposit.AssetId].Add(decimal.RequireFromString(deposit.Amount))
+	}
+	for _, deposit := range deposits {
+		amount, exists := depositAmounts[deposit.AssetId]
+		if !exists {
+			continue
+		}
+		delete(depositAmounts, deposit.AssetId)
+
+		// In index order, the first deposit provides the payment trace. A
+		// single deposit keeps the same trace as the normal deposit path.
+		id := common.UniqueId(deposit.Hash, fmt.Sprint(deposit.Index))
 		id = common.UniqueId(id, node.SolanaDepositEntry().String())
-		memo := []byte(fd.Hash)
-		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, fd.AssetId, mix.Members(), int(mix.Threshold), fd.Amount, memo, id)
+		memo := []byte(deposit.Hash)
+		tx := node.buildTransaction(ctx, req.Output, node.conf.AppId, deposit.AssetId, mix.Members(), int(mix.Threshold), amount.String(), memo, id)
 		if tx == nil {
-			return node.failRequest(ctx, req, fd.AssetId)
+			return node.failRequest(ctx, req, deposit.AssetId)
 		}
 		txs = append(txs, tx)
 		ids = append(ids, tx.TraceId)
@@ -1338,7 +1392,7 @@ func (node *Node) confirmBurnRelatedSystemCall(ctx context.Context, req *store.R
 	old = append(old, ids...)
 	call.RefundTraces = sql.NullString{Valid: true, String: strings.Join(old, ",")}
 
-	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, fd, txs)
+	err = node.store.ConfirmBurnRelatedSystemCallWithRequest(ctx, req, call, deposits, txs)
 	if err != nil {
 		panic(err)
 	}
